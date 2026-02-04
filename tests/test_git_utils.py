@@ -3,11 +3,7 @@ Tests for git utilities module.
 """
 
 import os
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from lucidity.tools.git_utils import (
     clone_repository,
@@ -90,13 +86,13 @@ def test_extract_repo_info_empty_string():
 
 
 def test_get_clone_directory():
-    """Test get_clone_directory creates proper path."""
+    """Test get_clone_directory creates proper path and parent directory."""
     repo_name = "test-repo"
     clone_dir = get_clone_directory(repo_name)
 
     assert repo_name in clone_dir
     assert "lucidity-mcp-repos" in clone_dir
-    # Directory should be created
+    # Verify parent directory structure is created (not the clone dir itself yet)
     assert os.path.exists(os.path.dirname(clone_dir))
 
 
@@ -125,9 +121,11 @@ def test_clone_repository_already_exists(mock_is_repo, mock_run):
     # Mock the git fetch and pull commands in update_repository
     mock_run.return_value = MagicMock(stdout="Already up to date.", returncode=0)
 
-    with patch("lucidity.tools.git_utils.os.chdir"):
-        with patch("lucidity.tools.git_utils.os.getcwd", return_value="/current"):
-            result = clone_repository("git@github.com:user/repo.git", "test-repo")
+    with (
+        patch("lucidity.tools.git_utils.os.chdir"),
+        patch("lucidity.tools.git_utils.os.getcwd", return_value="/current"),
+    ):
+        result = clone_repository("git@github.com:user/repo.git", "test-repo")
 
     assert result is not None
     # Should call fetch and pull, not clone
@@ -151,9 +149,11 @@ def test_update_repository_success(mock_is_repo, mock_run):
     mock_is_repo.return_value = True
     mock_run.return_value = MagicMock(stdout="Updated", returncode=0)
 
-    with patch("lucidity.tools.git_utils.os.chdir"):
-        with patch("lucidity.tools.git_utils.os.getcwd", return_value="/current"):
-            result = update_repository("/path/to/repo")
+    with (
+        patch("lucidity.tools.git_utils.os.chdir"),
+        patch("lucidity.tools.git_utils.os.getcwd", return_value="/current"),
+    ):
+        result = update_repository("/path/to/repo")
 
     assert result is True
     # Should call both fetch and pull
@@ -177,9 +177,11 @@ def test_update_repository_failure(mock_is_repo, mock_run):
     mock_is_repo.return_value = True
     mock_run.side_effect = Exception("Update failed")
 
-    with patch("lucidity.tools.git_utils.os.chdir"):
-        with patch("lucidity.tools.git_utils.os.getcwd", return_value="/current"):
-            result = update_repository("/path/to/repo")
+    with (
+        patch("lucidity.tools.git_utils.os.chdir"),
+        patch("lucidity.tools.git_utils.os.getcwd", return_value="/current"),
+    ):
+        result = update_repository("/path/to/repo")
 
     assert result is False
 

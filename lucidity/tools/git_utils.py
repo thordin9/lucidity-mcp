@@ -68,15 +68,21 @@ def extract_repo_info_from_path(workspace_root: str) -> dict[str, Any] | None:
     if "/" in workspace_root and not workspace_root.startswith("/"):
         # Assume it's a github repository
         if not workspace_root.startswith("github.com"):
-            # Try username/repo format
+            # Try username/repo format (exactly one slash)
             if workspace_root.count("/") == 1:
                 workspace_root = f"github.com/{workspace_root}"
 
         logger.debug("Detected short format, assuming GitHub: %s", workspace_root)
         # Convert to SSH URL (assuming SSH key is available per requirements)
         if workspace_root.startswith("github.com/"):
-            ssh_url = f"git@{workspace_root.replace('/', ':', 1)}.git"
-            return {"url": ssh_url, "name": _extract_repo_name(workspace_root)}
+            # Split into components for validation
+            parts = workspace_root.split("/")
+            if len(parts) >= 3:  # github.com, username, repo (and possibly more)
+                # Take only the first three parts for standard GitHub repos
+                username = parts[1]
+                repo = parts[2]
+                ssh_url = f"git@github.com:{username}/{repo}.git"
+                return {"url": ssh_url, "name": _extract_repo_name(repo)}
 
     return None
 
