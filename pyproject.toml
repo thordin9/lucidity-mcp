@@ -234,6 +234,7 @@ section-order = [
 
 # Run git commands
 "lucidity/tools/code_analysis.py" = ["S603", "S607"]
+"lucidity/tools/git_utils.py" = ["S603", "S607"]
 # More relaxed rules for tests
 "tests/**/*.py" = [
     "ARG001",  # Unused function arguments (common for fixtures)

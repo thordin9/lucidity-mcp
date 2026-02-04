@@ -10,13 +10,14 @@ from typing import Any
 
 from ..context import mcp
 from ..log import logger
+from .git_utils import ensure_repository
 
 
 def get_git_diff(workspace_root: str, path: str | None = None) -> tuple[str, str]:
     """Get the current git diff and the staged files content.
 
     Args:
-        workspace_root: The root directory of the workspace/git repository
+        workspace_root: The root directory of the workspace/git repository (can be a remote URL)
         path: Optional specific file path to get diff for
 
     Returns:
@@ -25,9 +26,13 @@ def get_git_diff(workspace_root: str, path: str | None = None) -> tuple[str, str
     logger.debug("Getting git diff%s in workspace %s", f" for path: {path}" if path else "", workspace_root)
 
     try:
-        if not os.path.exists(os.path.join(workspace_root, ".git")):
-            logger.error("No .git directory found in workspace root: %s", workspace_root)
+        # Ensure we have a local git repository (clone if remote)
+        actual_repo_path = ensure_repository(workspace_root)
+        if not actual_repo_path:
+            logger.error("Could not access or clone repository: %s", workspace_root)
             return "", ""
+
+        workspace_root = actual_repo_path
 
         # Store current directory
         current_dir = os.getcwd()
@@ -83,7 +88,7 @@ def get_changed_files(workspace_root: str) -> list[str]:
     """Get a list of all modified files (both staged and unstaged).
 
     Args:
-        workspace_root: The root directory of the workspace/git repository
+        workspace_root: The root directory of the workspace/git repository (can be a remote URL)
 
     Returns:
         List of modified file paths
@@ -91,9 +96,13 @@ def get_changed_files(workspace_root: str) -> list[str]:
     logger.debug("Getting changed files in workspace %s", workspace_root)
 
     try:
-        if not os.path.exists(os.path.join(workspace_root, ".git")):
-            logger.error("No .git directory found in workspace root: %s", workspace_root)
+        # Ensure we have a local git repository (clone if remote)
+        actual_repo_path = ensure_repository(workspace_root)
+        if not actual_repo_path:
+            logger.error("Could not access or clone repository: %s", workspace_root)
             return []
+
+        workspace_root = actual_repo_path
 
         # Store current directory
         current_dir = os.getcwd()
@@ -296,7 +305,9 @@ def analyze_changes(workspace_root: str = "", path: str = "") -> dict[str, Any]:
     through the Model Context Protocol.
 
     Args:
-        workspace_root: The root directory of the workspace/git repository
+        workspace_root: The root directory of the workspace/git repository,
+                       or a remote git URL (e.g., git@github.com:user/repo.git,
+                       https://github.com/user/repo.git, or user/repo for GitHub)
         path: Optional specific file path to analyze
 
     Returns:
