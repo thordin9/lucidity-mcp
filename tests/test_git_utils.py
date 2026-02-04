@@ -245,3 +245,102 @@ def test_ensure_repository_clone_failure(mock_is_repo, mock_clone):
     result = ensure_repository("git@github.com:user/repo.git")
 
     assert result is None
+
+
+def test_extract_repo_info_with_branch_ssh():
+    """Test extracting repository info from SSH URL with branch."""
+    url = "git@github.com:username/repo.git@develop"
+    result = extract_repo_info_from_path(url)
+
+    assert result is not None
+    assert result["url"] == "git@github.com:username/repo.git"
+    assert result["name"] == "repo"
+    assert result["branch"] == "develop"
+
+
+def test_extract_repo_info_with_branch_https():
+    """Test extracting repository info from HTTPS URL with branch."""
+    url = "https://github.com/username/repo.git@feature-branch"
+    result = extract_repo_info_from_path(url)
+
+    assert result is not None
+    assert result["url"] == "https://github.com/username/repo.git"
+    assert result["name"] == "repo"
+    assert result["branch"] == "feature-branch"
+
+
+def test_extract_repo_info_with_branch_short_format():
+    """Test extracting repository info from short format with branch."""
+    url = "username/repo@main"
+    result = extract_repo_info_from_path(url)
+
+    assert result is not None
+    assert result["url"] == "git@github.com:username/repo.git"
+    assert result["name"] == "repo"
+    assert result["branch"] == "main"
+
+
+def test_extract_repo_info_with_branch_github_format():
+    """Test extracting repository info from github.com format with branch."""
+    url = "github.com/username/repo@release-1.0"
+    result = extract_repo_info_from_path(url)
+
+    assert result is not None
+    assert result["url"] == "git@github.com:username/repo.git"
+    assert result["name"] == "repo"
+    assert result["branch"] == "release-1.0"
+
+
+@patch("lucidity.tools.git_utils.subprocess.run")
+@patch("lucidity.tools.git_utils.is_git_repository")
+def test_clone_repository_with_branch(mock_is_repo, mock_run):
+    """Test cloning repository with specific branch."""
+    mock_is_repo.return_value = False
+    mock_run.return_value = MagicMock(stdout="Cloning...", returncode=0)
+
+    result = clone_repository("git@github.com:user/repo.git", "test-repo", "develop")
+
+    assert result is not None
+    assert "test-repo" in result
+    # Verify that --branch flag was used
+    call_args = mock_run.call_args[0][0]
+    assert "--branch" in call_args
+    assert "develop" in call_args
+
+
+@patch("lucidity.tools.git_utils.subprocess.run")
+@patch("lucidity.tools.git_utils.is_git_repository")
+def test_update_repository_with_branch(mock_is_repo, mock_run):
+    """Test updating repository with branch checkout."""
+    mock_is_repo.return_value = True
+    mock_run.return_value = MagicMock(stdout="Updated", returncode=0)
+
+    with (
+        patch("lucidity.tools.git_utils.os.chdir"),
+        patch("lucidity.tools.git_utils.os.getcwd", return_value="/current"),
+    ):
+        result = update_repository("/path/to/repo", "feature-branch")
+
+    assert result is True
+    # Should call fetch, checkout, and pull
+    assert mock_run.call_count == 3
+    # Verify checkout was called with branch name
+    checkout_call = mock_run.call_args_list[1]
+    assert "checkout" in checkout_call[0][0]
+    assert "feature-branch" in checkout_call[0][0]
+
+
+@patch("lucidity.tools.git_utils.clone_repository")
+@patch("lucidity.tools.git_utils.is_git_repository")
+def test_ensure_repository_with_branch(mock_is_repo, mock_clone):
+    """Test ensure_repository with branch specification."""
+    mock_is_repo.return_value = False
+    mock_clone.return_value = "/tmp/cloned/repo"
+
+    result = ensure_repository("username/repo@develop")
+
+    assert result == "/tmp/cloned/repo"
+    # Verify clone was called with branch parameter
+    mock_clone.assert_called_once()
+    call_args = mock_clone.call_args
+    assert call_args[1] == "develop"  # branch is the third positional argument

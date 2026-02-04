@@ -307,7 +307,9 @@ def analyze_changes(workspace_root: str = "", path: str = "") -> dict[str, Any]:
     Args:
         workspace_root: The root directory of the workspace/git repository,
                        or a remote git URL (e.g., git@github.com:user/repo.git,
-                       https://github.com/user/repo.git, or user/repo for GitHub)
+                       https://github.com/user/repo.git, or user/repo for GitHub).
+                       You can specify a branch by appending @branch to the URL
+                       (e.g., user/repo@develop, git@github.com:user/repo.git@feature-branch)
         path: Optional specific file path to analyze
 
     Returns:

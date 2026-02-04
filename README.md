@@ -127,6 +127,7 @@ With an AI assistant connected to Lucidity, try these queries:
       - Supports HTTPS URLs: `https://github.com/username/repo.git`
       - Supports short GitHub format: `username/repo` (automatically converted to SSH)
       - Supports GitHub domain format: `github.com/username/repo` (automatically converted to SSH)
+      - **Branch specification**: Append `@branch` to any format (e.g., `username/repo@develop`)
     - `path`: Optional specific file path to analyze
 
 ### Remote Repository Support
@@ -136,7 +137,8 @@ Lucidity MCP now supports analyzing remote repositories without requiring a loca
 1. **Automatically clone** the repository to a temporary location (`/tmp/lucidity-mcp-repos/`)
 2. **Cache the clone** for future use to avoid repeated cloning
 3. **Update automatically** by fetching latest changes if the repository already exists
-4. **Work seamlessly** with the existing analysis workflow
+4. **Checkout specific branches** when specified using the `@branch` syntax
+5. **Work seamlessly** with the existing analysis workflow
 
 **Prerequisites for remote repositories:**
 - Git must be installed and accessible
@@ -145,18 +147,52 @@ Lucidity MCP now supports analyzing remote repositories without requiring a loca
 
 **Example usage:**
 ```python
-# Analyze a remote GitHub repository using short format
+# Analyze a remote GitHub repository using short format (default branch)
 analyze_changes(workspace_root="username/repo")
 
-# Or use full SSH URL
-analyze_changes(workspace_root="git@github.com:username/repo.git")
+# Analyze a specific branch
+analyze_changes(workspace_root="username/repo@develop")
 
-# Or HTTPS URL
-analyze_changes(workspace_root="https://github.com/username/repo.git")
+# Or use full SSH URL with branch
+analyze_changes(workspace_root="git@github.com:username/repo.git@feature-branch")
+
+# Or HTTPS URL with branch
+analyze_changes(workspace_root="https://github.com/username/repo.git@main")
 
 # Local repositories still work as before
 analyze_changes(workspace_root="/path/to/local/repo")
 ```
+
+### Instructions for AI Agents
+
+If you are an AI agent using this tool, follow these guidelines:
+
+1. **Default Usage**: For most cases, use the short format `username/repo` which will clone the default branch
+   ```python
+   analyze_changes(workspace_root="username/repo")
+   ```
+
+2. **Specify Branch**: If you need to analyze a specific branch (e.g., a development branch, pull request branch, or feature branch), append `@branch-name`:
+   ```python
+   analyze_changes(workspace_root="username/repo@develop")
+   analyze_changes(workspace_root="username/repo@feature/new-api")
+   ```
+
+3. **Local Repositories**: If the user provides a local path, use it directly:
+   ```python
+   analyze_changes(workspace_root="/home/user/project")
+   ```
+
+4. **Workflow Example**: When a user asks to analyze their code changes:
+   - Ask if they want to analyze a specific branch (if not specified)
+   - Use the appropriate format based on their response
+   - The tool will handle cloning, caching, and updating automatically
+
+5. **Error Handling**: If cloning fails:
+   - Check if the repository URL is correct
+   - Verify the branch name exists
+   - Ensure SSH keys are configured for private repositories
+   - Try HTTPS format if SSH fails
 
 ## 💻 Development
 

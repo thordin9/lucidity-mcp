@@ -34,15 +34,19 @@ def extract_repo_info_from_path(workspace_root: str) -> dict[str, Any] | None:
 
     This function attempts to parse a workspace_root that might be in the format:
     - git@github.com:username/repo.git
+    - git@github.com:username/repo.git@branch (with branch specification)
     - https://github.com/username/repo.git
+    - https://github.com/username/repo.git@branch (with branch specification)
     - github.com/username/repo
+    - github.com/username/repo@branch (with branch specification)
     - username/repo (assumes github.com)
+    - username/repo@branch (with branch specification)
 
     Args:
-        workspace_root: The workspace root path or URL
+        workspace_root: The workspace root path or URL, optionally with @branch suffix
 
     Returns:
-        Dictionary with 'url' and 'name' keys if parseable, None otherwise
+        Dictionary with 'url', 'name', and optional 'branch' keys if parseable, None otherwise
     """
     if not workspace_root:
         return None
@@ -54,15 +58,54 @@ def extract_repo_info_from_path(workspace_root: str) -> dict[str, Any] | None:
     # Try to detect if this looks like a git URL
     workspace_root = workspace_root.strip()
 
+    # Check for branch specification in the format @branch at the end
+    branch = None
+    # First check if it starts with git@ to avoid splitting on that @
+    if workspace_root.startswith("git@"):
+        # Look for a second @ which would indicate a branch
+        second_at = workspace_root.find("@", 4)  # Start search after "git@"
+        if second_at != -1:
+            # Extract branch and clean up the URL
+            branch = workspace_root[second_at + 1:]
+            workspace_root = workspace_root[:second_at]
+            # Validate branch (no slashes, no dots at start)
+            if "/" not in branch and not branch.startswith("."):
+                logger.debug("Detected branch specification: %s", branch)
+            else:
+                # Invalid branch format, restore
+                workspace_root = workspace_root + "@" + branch
+                branch = None
+    elif "@" in workspace_root and not workspace_root.startswith(("http://", "https://")):
+        # Split on the last @ for other formats
+        parts = workspace_root.rsplit("@", 1)
+        if len(parts) == 2 and "/" not in parts[1] and not parts[1].startswith("."):
+            workspace_root = parts[0]
+            branch = parts[1]
+            logger.debug("Detected branch specification: %s", branch)
+    elif workspace_root.startswith(("https://", "http://")):
+        # For HTTPS URLs, check for @branch at the end
+        if "@" in workspace_root:
+            parts = workspace_root.rsplit("@", 1)
+            if len(parts) == 2 and "/" not in parts[1] and not parts[1].startswith("."):
+                workspace_root = parts[0]
+                branch = parts[1]
+                logger.debug("Detected branch specification: %s", branch)
+
     # Handle SSH format: git@github.com:username/repo.git
     if workspace_root.startswith("git@"):
         logger.debug("Detected SSH git URL format: %s", workspace_root)
-        return {"url": workspace_root, "name": _extract_repo_name(workspace_root)}
+        result = {"url": workspace_root, "name": _extract_repo_name(workspace_root)}
+        if branch:
+            result["branch"] = branch
+        return result
 
     # Handle HTTPS format: https://github.com/username/repo.git
     if workspace_root.startswith(("https://", "http://")):
         logger.debug("Detected HTTPS git URL format: %s", workspace_root)
-        return {"url": workspace_root, "name": _extract_repo_name(workspace_root)}
+        result = {"url": workspace_root, "name": _extract_repo_name(workspace_root)}
+        if branch:
+            result["branch"] = branch
+        return result
 
     # Handle github.com/username/repo format
     if "/" in workspace_root and not workspace_root.startswith("/"):
@@ -76,7 +119,10 @@ def extract_repo_info_from_path(workspace_root: str) -> dict[str, Any] | None:
             repo = parts[2]
             ssh_url = f"git@github.com:{username}/{repo}.git"
             logger.debug("Detected GitHub format: %s -> %s", workspace_root, ssh_url)
-            return {"url": ssh_url, "name": _extract_repo_name(repo)}
+            result = {"url": ssh_url, "name": _extract_repo_name(repo)}
+            if branch:
+                result["branch"] = branch
+            return result
 
         # Check if it's in username/repo format (exactly 2 parts)
         if len(parts) == 2 and not parts[0].startswith("."):
@@ -85,7 +131,10 @@ def extract_repo_info_from_path(workspace_root: str) -> dict[str, Any] | None:
             repo = parts[1]
             ssh_url = f"git@github.com:{username}/{repo}.git"
             logger.debug("Detected short GitHub format: %s -> %s", workspace_root, ssh_url)
-            return {"url": ssh_url, "name": _extract_repo_name(repo)}
+            result = {"url": ssh_url, "name": _extract_repo_name(repo)}
+            if branch:
+                result["branch"] = branch
+            return result
 
     return None
 
@@ -127,12 +176,13 @@ def get_clone_directory(repo_name: str) -> str:
     return os.path.join(clone_base, repo_name)
 
 
-def clone_repository(repo_url: str, repo_name: str) -> str | None:
+def clone_repository(repo_url: str, repo_name: str, branch: str | None = None) -> str | None:
     """Clone a git repository to a temporary location.
 
     Args:
         repo_url: The git repository URL to clone
         repo_name: Name for the cloned repository directory
+        branch: Optional branch name to checkout after cloning
 
     Returns:
         Path to the cloned repository, or None if cloning failed
@@ -140,20 +190,27 @@ def clone_repository(repo_url: str, repo_name: str) -> str | None:
     clone_path = get_clone_directory(repo_name)
 
     logger.info("Attempting to clone repository %s to %s", repo_url, clone_path)
+    if branch:
+        logger.info("Will checkout branch: %s", branch)
 
     try:
         # If the directory already exists and is a git repo, try to update it instead
         if is_git_repository(clone_path):
             logger.info("Repository already exists at %s, attempting to update", clone_path)
-            if update_repository(clone_path):
+            if update_repository(clone_path, branch):
                 return clone_path
             logger.warning("Failed to update existing repository, will try to re-clone")
             # If update fails, remove and re-clone
             shutil.rmtree(clone_path)
 
         # Clone the repository
+        clone_cmd = ["git", "clone", repo_url, clone_path]
+        if branch:
+            # Clone specific branch for efficiency
+            clone_cmd.extend(["--branch", branch])
+
         result = subprocess.run(
-            ["git", "clone", repo_url, clone_path],
+            clone_cmd,
             capture_output=True,
             text=True,
             check=True,
@@ -174,11 +231,12 @@ def clone_repository(repo_url: str, repo_name: str) -> str | None:
         return None
 
 
-def update_repository(repo_path: str) -> bool:
+def update_repository(repo_path: str, branch: str | None = None) -> bool:
     """Update an existing git repository by fetching latest changes.
 
     Args:
         repo_path: Path to the git repository
+        branch: Optional branch name to checkout before updating
 
     Returns:
         True if update was successful, False otherwise
@@ -188,6 +246,8 @@ def update_repository(repo_path: str) -> bool:
         return False
 
     logger.info("Updating repository at %s", repo_path)
+    if branch:
+        logger.info("Will checkout branch: %s", branch)
 
     try:
         # Store current directory
@@ -206,6 +266,17 @@ def update_repository(repo_path: str) -> bool:
                 timeout=60,  # 1 minute timeout for fetching
             )
             logger.debug("Fetch output: %s", result.stdout)
+
+            # Checkout the specified branch if provided
+            if branch:
+                result = subprocess.run(
+                    ["git", "checkout", branch],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=30,
+                )
+                logger.debug("Checkout output: %s", result.stdout)
 
             # Pull changes for the current branch
             result = subprocess.run(
@@ -240,11 +311,13 @@ def ensure_repository(workspace_root: str) -> str | None:
 
     This function:
     1. Checks if workspace_root is already a local git repository
-    2. If not, tries to parse it as a remote repository URL
+    2. If not, tries to parse it as a remote repository URL (with optional branch)
     3. Clones the remote repository to a temporary location if needed
+    4. Checks out the specified branch if provided
 
     Args:
-        workspace_root: Either a local path to a git repository or a remote git URL
+        workspace_root: Either a local path to a git repository or a remote git URL,
+                       optionally with @branch suffix (e.g., username/repo@develop)
 
     Returns:
         Path to the git repository (local or cloned), or None if unavailable
@@ -260,7 +333,10 @@ def ensure_repository(workspace_root: str) -> str | None:
     repo_info = extract_repo_info_from_path(workspace_root)
     if repo_info:
         logger.info("Workspace root appears to be a remote repository: %s", repo_info["url"])
-        cloned_path = clone_repository(repo_info["url"], repo_info["name"])
+        branch = repo_info.get("branch")
+        if branch:
+            logger.info("Branch specified: %s", branch)
+        cloned_path = clone_repository(repo_info["url"], repo_info["name"], branch)
         if cloned_path:
             return cloned_path
         logger.error("Failed to clone remote repository")
