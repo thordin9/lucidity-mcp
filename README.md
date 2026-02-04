@@ -28,6 +28,7 @@ Before you commit, just ask Lucidity to analyze the changes instead of vibe-codi
 - 🧩 **Extensible Framework** - Easy to add new issue types or refine analysis criteria
 - 🔀 **Flexible Transport** - Supports both stdio for terminal-based interaction and SSE for network-based communication
 - 🔄 **Git-Aware Analysis** - Analyzes changes directly from git diff, making it ideal for pre-commit reviews
+- 🌍 **Remote Repository Support** - Works with remote git repositories, automatically cloning and caching as needed
 
 ## 🚀 Installation
 
@@ -120,8 +121,42 @@ With an AI assistant connected to Lucidity, try these queries:
 
 - `analyze_changes` - Prepares git changes for analysis through MCP
   - Parameters:
-    - `workspace_root`: The root directory of the workspace/git repository
+    - `workspace_root`: The root directory of the workspace/git repository, or a remote git URL
+      - Supports local paths: `/path/to/local/repo`
+      - Supports SSH URLs: `git@github.com:username/repo.git`
+      - Supports HTTPS URLs: `https://github.com/username/repo.git`
+      - Supports short GitHub format: `username/repo` (automatically converted to SSH)
+      - Supports GitHub domain format: `github.com/username/repo` (automatically converted to SSH)
     - `path`: Optional specific file path to analyze
+
+### Remote Repository Support
+
+Lucidity MCP now supports analyzing remote repositories without requiring a local clone! When you provide a remote repository URL as the `workspace_root`, Lucidity will:
+
+1. **Automatically clone** the repository to a temporary location (`/tmp/lucidity-mcp-repos/`)
+2. **Cache the clone** for future use to avoid repeated cloning
+3. **Update automatically** by fetching latest changes if the repository already exists
+4. **Work seamlessly** with the existing analysis workflow
+
+**Prerequisites for remote repositories:**
+- Git must be installed and accessible
+- For SSH URLs (default), a valid SSH key must be configured for authentication
+- For HTTPS URLs, appropriate credentials may be required
+
+**Example usage:**
+```python
+# Analyze a remote GitHub repository using short format
+analyze_changes(workspace_root="username/repo")
+
+# Or use full SSH URL
+analyze_changes(workspace_root="git@github.com:username/repo.git")
+
+# Or HTTPS URL
+analyze_changes(workspace_root="https://github.com/username/repo.git")
+
+# Local repositories still work as before
+analyze_changes(workspace_root="/path/to/local/repo")
+```
 
 ## 💻 Development
 
