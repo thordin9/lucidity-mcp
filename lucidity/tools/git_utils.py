@@ -68,8 +68,8 @@ def extract_repo_info_from_path(workspace_root: str) -> dict[str, Any] | None:
             # Extract branch and clean up the URL
             branch = workspace_root[second_at + 1:]
             workspace_root = workspace_root[:second_at]
-            # Validate branch (no slashes, no dots at start)
-            if "/" not in branch and not branch.startswith("."):
+            # Validate branch (no dots at start for security)
+            if not branch.startswith("."):
                 logger.debug("Detected branch specification: %s", branch)
             else:
                 # Invalid branch format, restore
@@ -78,7 +78,7 @@ def extract_repo_info_from_path(workspace_root: str) -> dict[str, Any] | None:
     elif "@" in workspace_root and not workspace_root.startswith(("http://", "https://")):
         # Split on the last @ for other formats
         parts = workspace_root.rsplit("@", 1)
-        if len(parts) == 2 and "/" not in parts[1] and not parts[1].startswith("."):
+        if len(parts) == 2 and not parts[1].startswith("."):
             workspace_root = parts[0]
             branch = parts[1]
             logger.debug("Detected branch specification: %s", branch)
@@ -86,7 +86,7 @@ def extract_repo_info_from_path(workspace_root: str) -> dict[str, Any] | None:
         # For HTTPS URLs, check for @branch at the end
         if "@" in workspace_root:
             parts = workspace_root.rsplit("@", 1)
-            if len(parts) == 2 and "/" not in parts[1] and not parts[1].startswith("."):
+            if len(parts) == 2 and not parts[1].startswith("."):
                 workspace_root = parts[0]
                 branch = parts[1]
                 logger.debug("Detected branch specification: %s", branch)
@@ -182,7 +182,7 @@ def clone_repository(repo_url: str, repo_name: str, branch: str | None = None) -
     Args:
         repo_url: The git repository URL to clone
         repo_name: Name for the cloned repository directory
-        branch: Optional branch name to checkout after cloning
+        branch: Optional branch name to clone (uses --branch flag during clone)
 
     Returns:
         Path to the cloned repository, or None if cloning failed

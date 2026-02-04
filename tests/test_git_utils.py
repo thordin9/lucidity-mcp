@@ -340,7 +340,7 @@ def test_ensure_repository_with_branch(mock_is_repo, mock_clone):
     result = ensure_repository("username/repo@develop")
 
     assert result == "/tmp/cloned/repo"
-    # Verify clone was called with branch parameter
+    # Verify clone was called with branch parameter (third positional argument)
     mock_clone.assert_called_once()
     call_args = mock_clone.call_args
-    assert call_args[1] == "develop"  # branch is the third positional argument
+    assert call_args[0][2] == "develop"  # branch is the third positional argument
