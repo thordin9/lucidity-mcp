@@ -66,23 +66,26 @@ def extract_repo_info_from_path(workspace_root: str) -> dict[str, Any] | None:
 
     # Handle github.com/username/repo format
     if "/" in workspace_root and not workspace_root.startswith("/"):
-        # Assume it's a github repository
-        if not workspace_root.startswith("github.com"):
-            # Try username/repo format (exactly one slash)
-            if workspace_root.count("/") == 1:
-                workspace_root = f"github.com/{workspace_root}"
+        # Normalize and validate GitHub repository format
+        parts = workspace_root.split("/")
 
-        logger.debug("Detected short format, assuming GitHub: %s", workspace_root)
-        # Convert to SSH URL (assuming SSH key is available per requirements)
-        if workspace_root.startswith("github.com/"):
-            # Split into components for validation
-            parts = workspace_root.split("/")
-            if len(parts) >= 3:  # github.com, username, repo (and possibly more)
-                # Take only the first three parts for standard GitHub repos
-                username = parts[1]
-                repo = parts[2]
-                ssh_url = f"git@github.com:{username}/{repo}.git"
-                return {"url": ssh_url, "name": _extract_repo_name(repo)}
+        # Check if it's already in github.com/username/repo format
+        if len(parts) >= 3 and parts[0] == "github.com":
+            # Valid format: github.com/username/repo
+            username = parts[1]
+            repo = parts[2]
+            ssh_url = f"git@github.com:{username}/{repo}.git"
+            logger.debug("Detected GitHub format: %s -> %s", workspace_root, ssh_url)
+            return {"url": ssh_url, "name": _extract_repo_name(repo)}
+
+        # Check if it's in username/repo format (exactly 2 parts)
+        if len(parts) == 2 and not parts[0].startswith("."):
+            # Assume it's a GitHub repository in short format
+            username = parts[0]
+            repo = parts[1]
+            ssh_url = f"git@github.com:{username}/{repo}.git"
+            logger.debug("Detected short GitHub format: %s -> %s", workspace_root, ssh_url)
+            return {"url": ssh_url, "name": _extract_repo_name(repo)}
 
     return None
 
