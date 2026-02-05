@@ -334,9 +334,6 @@ Is the MCP server running on the same machine as the repository?
    ```
 
 5. **Local Development (Only if MCP Server Has Access)**
-   ```
-
-3. **Local Development (Only if MCP Server Has Access)**
    
    Only use filesystem paths when:
    - MCP server runs on your local machine

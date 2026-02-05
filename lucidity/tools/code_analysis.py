@@ -320,7 +320,7 @@ def detect_language(filename: str) -> str:
 
 
 @mcp.tool("analyze_changes")
-def analyze_changes(workspace_root: str = "", path: str = "", commits: str = "") -> dict[str, Any]:
+def analyze_changes(workspace_root: str = "", path: str = "", commits: str | None = None) -> dict[str, Any]:
     """Prepare git changes for analysis through MCP.
 
     This tool examines git changes (either uncommitted or committed), extracts changed code,
@@ -445,7 +445,7 @@ def analyze_changes(workspace_root: str = "", path: str = "", commits: str = "")
 
     # Get git diff
     logger.debug("Fetching git diff...")
-    diff_content, staged_content = get_git_diff(workspace_root, path, commits if commits else None)
+    diff_content, staged_content = get_git_diff(workspace_root, path, commits)
 
     # Get list of all changed files
     changed_files = get_changed_files(workspace_root)
