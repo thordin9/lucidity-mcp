@@ -3,6 +3,7 @@ Tests for git utilities module.
 """
 
 import os
+import time
 from unittest.mock import MagicMock, patch
 
 from lucidity.tools.git_utils import (
@@ -427,7 +428,6 @@ def test_touch_repository_access(tmp_path):
     first_mtime = access_file.stat().st_mtime
 
     # Wait a bit and touch again
-    import time
     time.sleep(0.1)
     touch_repository_access(str(repo_path))
 
@@ -458,7 +458,6 @@ def test_cleanup_inactive_repositories(mock_is_repo, mock_get_cache, mock_rmtree
     (new_repo / ".git").mkdir()
 
     # Set access times - old repo 10 days ago, new repo now
-    import time
     current_time = time.time()
     old_time = current_time - (10 * 24 * 60 * 60)  # 10 days ago
 
@@ -504,7 +503,6 @@ def test_cleanup_inactive_repositories_dry_run(mock_get_cache, mock_rmtree, tmp_
     (old_repo / ".git").mkdir()
 
     # Set old access time
-    import time
     current_time = time.time()
     old_time = current_time - (10 * 24 * 60 * 60)
 
