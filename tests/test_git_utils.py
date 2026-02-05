@@ -388,3 +388,4 @@ def test_update_repository_disables_host_key_checking(mock_is_repo, mock_run):
             assert "env" in call_kwargs
             assert "GIT_SSH_COMMAND" in call_kwargs["env"]
             assert "StrictHostKeyChecking=no" in call_kwargs["env"]["GIT_SSH_COMMAND"]
+            assert "UserKnownHostsFile=/dev/null" in call_kwargs["env"]["GIT_SSH_COMMAND"]

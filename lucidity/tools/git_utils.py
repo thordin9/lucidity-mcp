@@ -211,6 +211,9 @@ def clone_repository(repo_url: str, repo_name: str, branch: str | None = None) -
 
         # Set up environment to disable SSH host key verification
         # This prevents "Host key verification failed" errors when cloning via SSH
+        # Note: This reduces security by disabling protection against MITM attacks,
+        # but is necessary for automated workflows and development environments.
+        # Users requiring strict security should use HTTPS with credentials instead.
         env = os.environ.copy()
         env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 
@@ -261,6 +264,8 @@ def update_repository(repo_path: str, branch: str | None = None) -> bool:
 
         # Set up environment to disable SSH host key verification
         # This prevents "Host key verification failed" errors when fetching via SSH
+        # Note: This reduces security by disabling protection against MITM attacks,
+        # but is necessary for automated workflows and development environments.
         env = os.environ.copy()
         env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 
