@@ -187,6 +187,22 @@ def parse_args() -> argparse.Namespace:
         "--log-file",
         help="Path to log file (required for stdio transport if logs enabled)",
     )
+    parser.add_argument(
+        "--cleanup-cache",
+        action="store_true",
+        help="Clean up inactive repository caches and exit",
+    )
+    parser.add_argument(
+        "--cleanup-days",
+        type=int,
+        default=7,
+        help="Number of days of inactivity before removing cached repositories (default: 7)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be cleaned up without actually deleting (only with --cleanup-cache)",
+    )
     return parser.parse_args()
 
 
@@ -200,6 +216,33 @@ def main() -> int:
 
     # Set log level based on arguments
     log_level = args.log_level if not args.debug else "DEBUG"
+
+    # Handle cleanup mode
+    if args.cleanup_cache:
+        # Set up simple logging for cleanup
+        from .tools.git_utils import cleanup_inactive_repositories
+        
+        handler = RichHandler(rich_tracebacks=True, markup=True)
+        setup_logging(log_level, args.debug, handler, args.log_file, True, False)
+        
+        logger.info("Running repository cache cleanup")
+        result = cleanup_inactive_repositories(days=args.cleanup_days, dry_run=args.dry_run)
+        
+        # Print summary
+        print(f"\n{'='*60}")
+        print(f"Repository Cache Cleanup {'(DRY RUN)' if args.dry_run else ''}")
+        print(f"{'='*60}")
+        print(f"Cache Directory: {result['cache_dir']}")
+        print(f"Repositories Scanned: {result['scanned']}")
+        print(f"Repositories {'to Remove' if args.dry_run else 'Removed'}: {result['removed']}")
+        print(f"Space {'to Free' if args.dry_run else 'Freed'}: {result['freed_bytes'] / (1024 * 1024):.2f} MB")
+        if result['repositories']:
+            print(f"\nRepositories:")
+            for repo in result['repositories']:
+                print(f"  - {repo}")
+        print(f"{'='*60}\n")
+        
+        return 0
 
     # Determine logging mode:
     # 1. Normal console logging (for sse or non-terminal use)

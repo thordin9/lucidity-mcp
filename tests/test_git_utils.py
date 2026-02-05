@@ -389,3 +389,138 @@ def test_update_repository_disables_host_key_checking(mock_is_repo, mock_run):
             assert "GIT_SSH_COMMAND" in call_kwargs["env"]
             assert "StrictHostKeyChecking=no" in call_kwargs["env"]["GIT_SSH_COMMAND"]
             assert "UserKnownHostsFile=/dev/null" in call_kwargs["env"]["GIT_SSH_COMMAND"]
+
+
+def test_get_cache_directory_default():
+    """Test get_cache_directory returns default path when no env var set."""
+    from lucidity.tools.git_utils import get_cache_directory
+
+    with patch.dict("os.environ", {}, clear=True):
+        cache_dir = get_cache_directory()
+        assert "lucidity-mcp-repos" in cache_dir
+
+
+def test_get_cache_directory_custom():
+    """Test get_cache_directory returns custom path from env var."""
+    from lucidity.tools.git_utils import get_cache_directory
+
+    custom_dir = "/custom/cache/path"
+    with patch.dict("os.environ", {"LUCIDITY_CACHE_DIR": custom_dir}):
+        cache_dir = get_cache_directory()
+        assert cache_dir == custom_dir
+
+
+def test_touch_repository_access(tmp_path):
+    """Test touch_repository_access creates/updates .last_accessed file."""
+    from lucidity.tools.git_utils import touch_repository_access
+
+    repo_path = tmp_path / "test-repo"
+    repo_path.mkdir()
+
+    access_file = repo_path / ".last_accessed"
+    assert not access_file.exists()
+
+    touch_repository_access(str(repo_path))
+    assert access_file.exists()
+
+    # Get initial mtime
+    first_mtime = access_file.stat().st_mtime
+
+    # Wait a bit and touch again
+    import time
+    time.sleep(0.1)
+    touch_repository_access(str(repo_path))
+
+    # Verify mtime was updated
+    second_mtime = access_file.stat().st_mtime
+    assert second_mtime > first_mtime
+
+
+@patch("lucidity.tools.git_utils.shutil.rmtree")
+@patch("lucidity.tools.git_utils.get_cache_directory")
+@patch("lucidity.tools.git_utils.is_git_repository")
+def test_cleanup_inactive_repositories(mock_is_repo, mock_get_cache, mock_rmtree, tmp_path):
+    """Test cleanup_inactive_repositories removes old repos."""
+    from lucidity.tools.git_utils import cleanup_inactive_repositories
+
+    # Set up test cache directory
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    mock_get_cache.return_value = str(cache_dir)
+
+    # Create test repositories
+    old_repo = cache_dir / "old-repo"
+    old_repo.mkdir()
+    (old_repo / ".git").mkdir()
+    
+    new_repo = cache_dir / "new-repo"
+    new_repo.mkdir()
+    (new_repo / ".git").mkdir()
+
+    # Set access times - old repo 10 days ago, new repo now
+    import time
+    current_time = time.time()
+    old_time = current_time - (10 * 24 * 60 * 60)  # 10 days ago
+
+    # Create .last_accessed files
+    old_access = old_repo / ".last_accessed"
+    old_access.touch()
+    os.utime(str(old_access), (old_time, old_time))
+
+    new_access = new_repo / ".last_accessed"
+    new_access.touch()
+
+    # Mock is_git_repository to return True
+    mock_is_repo.return_value = True
+
+    # Run cleanup with 7 day threshold
+    result = cleanup_inactive_repositories(days=7, dry_run=False)
+
+    # Verify results
+    assert result["scanned"] == 2
+    assert result["removed"] == 1
+    assert "old-repo" in result["repositories"]
+    assert "new-repo" not in result["repositories"]
+    
+    # Verify rmtree was called for old repo
+    mock_rmtree.assert_called_once()
+    assert "old-repo" in str(mock_rmtree.call_args[0][0])
+
+
+@patch("lucidity.tools.git_utils.shutil.rmtree")
+@patch("lucidity.tools.git_utils.get_cache_directory")
+def test_cleanup_inactive_repositories_dry_run(mock_get_cache, mock_rmtree, tmp_path):
+    """Test cleanup_inactive_repositories dry run doesn't delete."""
+    from lucidity.tools.git_utils import cleanup_inactive_repositories
+
+    # Set up test cache directory
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    mock_get_cache.return_value = str(cache_dir)
+
+    # Create test repository
+    old_repo = cache_dir / "old-repo"
+    old_repo.mkdir()
+    (old_repo / ".git").mkdir()
+
+    # Set old access time
+    import time
+    current_time = time.time()
+    old_time = current_time - (10 * 24 * 60 * 60)
+
+    old_access = old_repo / ".last_accessed"
+    old_access.touch()
+    os.utime(str(old_access), (old_time, old_time))
+
+    # Run dry run cleanup
+    result = cleanup_inactive_repositories(days=7, dry_run=True)
+
+    # Verify results
+    assert result["removed"] == 1
+    assert "old-repo" in result["repositories"]
+    
+    # Verify rmtree was NOT called
+    mock_rmtree.assert_not_called()
+    
+    # Verify directory still exists
+    assert old_repo.exists()

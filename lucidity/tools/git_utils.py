@@ -5,15 +5,33 @@ This module provides utilities to:
 - Check if a directory is a git repository
 - Clone remote repositories when not available locally
 - Fetch/update existing cloned repositories
+- Clean up inactive repository caches
 """
 
 import os
 import shutil
 import subprocess
 import tempfile
+import time
+from pathlib import Path
 from typing import Any
 
 from ..log import logger
+
+
+def get_cache_directory() -> str:
+    """Get the base directory for caching cloned repositories.
+
+    The cache directory can be configured via the LUCIDITY_CACHE_DIR environment variable.
+    If not set, defaults to /tmp/lucidity-mcp-repos.
+
+    Returns:
+        Path to the cache directory
+    """
+    cache_dir = os.environ.get("LUCIDITY_CACHE_DIR")
+    if cache_dir:
+        return cache_dir
+    return os.path.join(tempfile.gettempdir(), "lucidity-mcp-repos")
 
 
 def is_git_repository(path: str) -> bool:
@@ -161,7 +179,7 @@ def _extract_repo_name(url: str) -> str:
 def get_clone_directory(repo_name: str) -> str:
     """Get the directory path where a repository should be cloned.
 
-    Creates a temporary directory structure for cloned repositories.
+    Creates a directory structure for cloned repositories in the cache directory.
 
     Args:
         repo_name: Name of the repository
@@ -169,11 +187,29 @@ def get_clone_directory(repo_name: str) -> str:
     Returns:
         Path to the directory where the repo should be cloned
     """
-    # Create a dedicated directory for cloned repos in temp
-    clone_base = os.path.join(tempfile.gettempdir(), "lucidity-mcp-repos")
+    # Create a dedicated directory for cloned repos in the configured cache location
+    clone_base = get_cache_directory()
     os.makedirs(clone_base, exist_ok=True)
 
     return os.path.join(clone_base, repo_name)
+
+
+def touch_repository_access(repo_path: str) -> None:
+    """Update the last access time for a repository.
+
+    Creates or updates a .last_accessed file in the repository directory
+    to track when the repository was last used.
+
+    Args:
+        repo_path: Path to the repository directory
+    """
+    try:
+        access_file = os.path.join(repo_path, ".last_accessed")
+        # Create or update the file's modification time
+        Path(access_file).touch()
+        logger.debug("Updated access time for repository: %s", repo_path)
+    except Exception as e:
+        logger.warning("Failed to update access time for %s: %s", repo_path, e)
 
 
 def clone_repository(repo_url: str, repo_name: str, branch: str | None = None) -> str | None:
@@ -227,6 +263,10 @@ def clone_repository(repo_url: str, repo_name: str, branch: str | None = None) -
         )
         logger.debug("Clone output: %s", result.stdout)
         logger.info("Successfully cloned repository to %s", clone_path)
+        
+        # Track repository access time
+        touch_repository_access(clone_path)
+        
         return clone_path
 
     except subprocess.TimeoutExpired:
@@ -307,6 +347,10 @@ def update_repository(repo_path: str, branch: str | None = None) -> bool:
             logger.debug("Pull output: %s", result.stdout)
 
             logger.info("Successfully updated repository at %s", repo_path)
+            
+            # Track repository access time
+            touch_repository_access(repo_path)
+            
             return True
 
         finally:
@@ -367,3 +411,128 @@ def ensure_repository(workspace_root: str) -> str | None:
         logger.warning("Path %s does not exist and could not be parsed as a remote URL", workspace_root)
 
     return None
+
+
+def cleanup_inactive_repositories(days: int = 7, dry_run: bool = False) -> dict[str, Any]:
+    """Clean up repository caches that haven't been accessed in the specified number of days.
+
+    This function scans the cache directory and removes repositories that haven't been
+    accessed within the specified time period. Access time is tracked via the .last_accessed
+    file in each repository directory.
+
+    Args:
+        days: Number of days of inactivity before a repository is considered for cleanup (default: 7)
+        dry_run: If True, only report what would be deleted without actually deleting (default: False)
+
+    Returns:
+        Dictionary containing cleanup statistics:
+        - 'cache_dir': Path to the cache directory
+        - 'scanned': Number of directories scanned
+        - 'removed': Number of repositories removed
+        - 'freed_bytes': Approximate bytes freed
+        - 'repositories': List of repository paths that were removed or would be removed
+    """
+    cache_dir = get_cache_directory()
+    
+    logger.info("Starting cleanup of inactive repositories in %s (inactive for %d+ days)", cache_dir, days)
+    if dry_run:
+        logger.info("DRY RUN: No repositories will actually be deleted")
+    
+    if not os.path.exists(cache_dir):
+        logger.info("Cache directory does not exist: %s", cache_dir)
+        return {
+            "cache_dir": cache_dir,
+            "scanned": 0,
+            "removed": 0,
+            "freed_bytes": 0,
+            "repositories": [],
+        }
+    
+    current_time = time.time()
+    cutoff_time = current_time - (days * 24 * 60 * 60)  # Convert days to seconds
+    
+    scanned = 0
+    removed = 0
+    freed_bytes = 0
+    removed_repos = []
+    
+    try:
+        for entry in os.listdir(cache_dir):
+            repo_path = os.path.join(cache_dir, entry)
+            
+            # Skip non-directories
+            if not os.path.isdir(repo_path):
+                continue
+            
+            scanned += 1
+            
+            # Check if it's a git repository
+            if not is_git_repository(repo_path):
+                logger.debug("Skipping non-git directory: %s", repo_path)
+                continue
+            
+            # Check access time via .last_accessed file
+            access_file = os.path.join(repo_path, ".last_accessed")
+            
+            # If no .last_accessed file, check directory modification time as fallback
+            if os.path.exists(access_file):
+                last_access = os.path.getmtime(access_file)
+            else:
+                # Use directory modification time if .last_accessed doesn't exist
+                last_access = os.path.getmtime(repo_path)
+            
+            # Check if repository is inactive
+            if last_access < cutoff_time:
+                # Calculate size before deletion
+                repo_size = 0
+                try:
+                    for dirpath, dirnames, filenames in os.walk(repo_path):
+                        for filename in filenames:
+                            filepath = os.path.join(dirpath, filename)
+                            try:
+                                repo_size += os.path.getsize(filepath)
+                            except OSError:
+                                pass  # Skip files we can't access
+                except OSError as e:
+                    logger.warning("Error calculating size for %s: %s", repo_path, e)
+                
+                days_inactive = (current_time - last_access) / (24 * 60 * 60)
+                logger.info(
+                    "%s repository: %s (%.1f days inactive, ~%.2f MB)",
+                    "Would remove" if dry_run else "Removing",
+                    entry,
+                    days_inactive,
+                    repo_size / (1024 * 1024),
+                )
+                
+                if not dry_run:
+                    try:
+                        shutil.rmtree(repo_path)
+                        logger.info("Successfully removed %s", repo_path)
+                    except Exception as e:
+                        logger.error("Failed to remove %s: %s", repo_path, e)
+                        continue
+                
+                removed += 1
+                freed_bytes += repo_size
+                removed_repos.append(entry)
+    
+    except Exception as e:
+        logger.error("Error during cleanup: %s", e)
+    
+    logger.info(
+        "Cleanup complete: scanned %d, %s %d repositories, %s ~%.2f MB",
+        scanned,
+        "would remove" if dry_run else "removed",
+        removed,
+        "would free" if dry_run else "freed",
+        freed_bytes / (1024 * 1024),
+    )
+    
+    return {
+        "cache_dir": cache_dir,
+        "scanned": scanned,
+        "removed": removed,
+        "freed_bytes": freed_bytes,
+        "repositories": removed_repos,
+    }

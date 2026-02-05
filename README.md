@@ -134,17 +134,26 @@ With an AI assistant connected to Lucidity, try these queries:
 
 Lucidity MCP now supports analyzing remote repositories without requiring a local clone! When you provide a remote repository URL as the `workspace_root`, Lucidity will:
 
-1. **Automatically clone** the repository to a temporary location (`/tmp/lucidity-mcp-repos/`)
+1. **Automatically clone** the repository to a cache location (default: `/tmp/lucidity-mcp-repos/`)
 2. **Cache the clone** for future use to avoid repeated cloning
 3. **Update automatically** by fetching latest changes if the repository already exists
 4. **Checkout specific branches** when specified using the `@branch` syntax
 5. **Work seamlessly** with the existing analysis workflow
 6. **Skip SSH host key verification** for convenience (see security note below)
+7. **Track access times** to enable cleanup of inactive repositories
 
 **Prerequisites for remote repositories:**
 - Git must be installed and accessible
 - For SSH URLs (default), a valid SSH key must be configured for authentication
 - For HTTPS URLs, appropriate credentials may be required
+
+**Cache Configuration:**
+The repository cache location can be customized using the `LUCIDITY_CACHE_DIR` environment variable:
+```bash
+export LUCIDITY_CACHE_DIR="/path/to/custom/cache"
+```
+
+If not set, repositories are cached in `/tmp/lucidity-mcp-repos/`.
 
 **Security Note:**
 SSH host key verification is automatically disabled when cloning or updating repositories via SSH. This allows seamless operation without requiring manual host key acceptance. While this is convenient for development and automated workflows, be aware that it bypasses a security measure that normally protects against man-in-the-middle attacks.
@@ -166,6 +175,40 @@ analyze_changes(workspace_root="https://github.com/username/repo.git@main")
 # Local repositories still work as before
 analyze_changes(workspace_root="/path/to/local/repo")
 ```
+
+### Repository Cache Cleanup
+
+To prevent disk space issues from accumulated cached repositories, Lucidity provides a cleanup command that removes repositories that haven't been accessed recently.
+
+**Manual Cleanup:**
+```bash
+# Clean up repositories inactive for 7+ days (default)
+lucidity-mcp --cleanup-cache
+
+# Specify custom inactivity threshold (e.g., 30 days)
+lucidity-mcp --cleanup-cache --cleanup-days 30
+
+# Dry run to see what would be removed without actually deleting
+lucidity-mcp --cleanup-cache --dry-run
+```
+
+**Automated Cleanup with Cron:**
+Add to your crontab to run cleanup automatically:
+```bash
+# Clean up every Sunday at 2 AM
+0 2 * * 0 /path/to/lucidity-mcp --cleanup-cache --cleanup-days 7
+
+# Or using custom cache directory
+0 2 * * 0 LUCIDITY_CACHE_DIR=/custom/path /path/to/lucidity-mcp --cleanup-cache
+```
+
+The cleanup process:
+- Scans the cache directory for cloned repositories
+- Checks the `.last_accessed` file in each repository
+- Removes repositories that haven't been accessed within the specified time period
+- Reports the number of repositories removed and disk space freed
+
+**Note:** Each time a repository is cloned or updated, its access time is automatically tracked, so actively used repositories will never be removed.
 
 ### Instructions for AI Agents
 
