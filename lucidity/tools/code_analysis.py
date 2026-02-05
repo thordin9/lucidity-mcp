@@ -347,12 +347,12 @@ def analyze_changes(workspace_root: str = "", path: str = "") -> dict[str, Any]:
     if not workspace_root:
         return {"status": "error", "message": "workspace_root parameter is required"}
 
-    # Get git diff
-    logger.debug("Fetching git diff...")
-    diff_content, staged_content = get_git_diff(workspace_root, path)
+    # First, ensure we can access the repository (will clone if remote)
+    from .git_utils import ensure_repository
+    actual_repo_path = ensure_repository(workspace_root)
     
-    # Check if repository access failed (returns empty strings)
-    if not diff_content and not staged_content:
+    # Check if repository access failed
+    if not actual_repo_path:
         # Check if this looks like a local path that might not exist on MCP server
         if workspace_root.startswith('/') or workspace_root.startswith('./') or workspace_root.startswith('../'):
             return {
@@ -374,6 +374,15 @@ def analyze_changes(workspace_root: str = "", path: str = "") -> dict[str, Any]:
                     "from environment variables instead of using the local checkout path."
                 )
             }
+        else:
+            return {
+                "status": "error",
+                "message": f"Could not access or clone repository: {workspace_root}"
+            }
+
+    # Get git diff
+    logger.debug("Fetching git diff...")
+    diff_content, staged_content = get_git_diff(workspace_root, path)
 
     # Get list of all changed files
     changed_files = get_changed_files(workspace_root)

@@ -276,18 +276,20 @@ Is the MCP server running on the same machine as the repository?
    ```python
    # These paths exist on CI runner, NOT on MCP server
    analyze_changes(workspace_root="/home/runner/_work/repo/repo")
-   analyze_changes(workspace_root="${GITHUB_WORKSPACE}")
+   analyze_changes(workspace_root="/github/workspace")  # Even if set via CI environment
    ```
    
    ✅ **DO** extract repository info from CI environment:
    ```python
    # Use repository slug from CI environment variables
-   # GitHub Actions: $GITHUB_REPOSITORY = "username/repo"
+   # GitHub Actions example: GITHUB_REPOSITORY = "username/repo"
    analyze_changes(workspace_root="username/repo@feature-branch")
    
-   # Or construct from environment variables:
-   # repo = os.environ['GITHUB_REPOSITORY']  # e.g., "username/repo"
-   # branch = os.environ['GITHUB_REF_NAME']   # e.g., "feature-branch"
+   # Or construct dynamically in Python from environment variables:
+   import os
+   repo = os.environ.get('GITHUB_REPOSITORY', 'username/repo')  # e.g., "username/repo"
+   branch = os.environ.get('GITHUB_REF_NAME', 'main')           # e.g., "feature-branch"
+   analyze_changes(workspace_root=f"{repo}@{branch}")
    analyze_changes(workspace_root=f"{repo}@{branch}")
    ```
 
