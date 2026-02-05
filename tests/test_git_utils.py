@@ -344,3 +344,47 @@ def test_ensure_repository_with_branch(mock_is_repo, mock_clone):
     mock_clone.assert_called_once()
     call_args = mock_clone.call_args
     assert call_args[0][2] == "develop"  # branch is the third positional argument
+
+
+@patch("lucidity.tools.git_utils.subprocess.run")
+@patch("lucidity.tools.git_utils.is_git_repository")
+def test_clone_repository_disables_host_key_checking(mock_is_repo, mock_run):
+    """Test that clone_repository disables SSH host key checking."""
+    mock_is_repo.return_value = False
+    mock_run.return_value = MagicMock(stdout="Cloning...", returncode=0)
+
+    result = clone_repository("git@github.com:user/repo.git", "test-repo")
+
+    assert result is not None
+    # Verify subprocess.run was called with env containing GIT_SSH_COMMAND
+    mock_run.assert_called_once()
+    call_kwargs = mock_run.call_args[1]
+    assert "env" in call_kwargs
+    assert "GIT_SSH_COMMAND" in call_kwargs["env"]
+    assert "StrictHostKeyChecking=no" in call_kwargs["env"]["GIT_SSH_COMMAND"]
+    assert "UserKnownHostsFile=/dev/null" in call_kwargs["env"]["GIT_SSH_COMMAND"]
+
+
+@patch("lucidity.tools.git_utils.subprocess.run")
+@patch("lucidity.tools.git_utils.is_git_repository")
+def test_update_repository_disables_host_key_checking(mock_is_repo, mock_run):
+    """Test that update_repository disables SSH host key checking."""
+    mock_is_repo.return_value = True
+    mock_run.return_value = MagicMock(stdout="Updated", returncode=0)
+
+    with (
+        patch("lucidity.tools.git_utils.os.chdir"),
+        patch("lucidity.tools.git_utils.os.getcwd", return_value="/current"),
+    ):
+        result = update_repository("/path/to/repo")
+
+    assert result is True
+    # Verify that subprocess.run calls for fetch and pull include env with GIT_SSH_COMMAND
+    assert mock_run.call_count >= 2  # fetch and pull
+    for call in mock_run.call_args_list:
+        # Check if this is a fetch or pull command (not checkout)
+        if call[0][0][1] in ["fetch", "pull"]:
+            call_kwargs = call[1]
+            assert "env" in call_kwargs
+            assert "GIT_SSH_COMMAND" in call_kwargs["env"]
+            assert "StrictHostKeyChecking=no" in call_kwargs["env"]["GIT_SSH_COMMAND"]

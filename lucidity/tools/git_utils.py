@@ -209,12 +209,18 @@ def clone_repository(repo_url: str, repo_name: str, branch: str | None = None) -
             # Clone specific branch for efficiency
             clone_cmd.extend(["--branch", branch])
 
+        # Set up environment to disable SSH host key verification
+        # This prevents "Host key verification failed" errors when cloning via SSH
+        env = os.environ.copy()
+        env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
         result = subprocess.run(
             clone_cmd,
             capture_output=True,
             text=True,
             check=True,
             timeout=300,  # 5 minute timeout for cloning
+            env=env,
         )
         logger.debug("Clone output: %s", result.stdout)
         logger.info("Successfully cloned repository to %s", clone_path)
@@ -253,6 +259,11 @@ def update_repository(repo_path: str, branch: str | None = None) -> bool:
         # Store current directory
         current_dir = os.getcwd()
 
+        # Set up environment to disable SSH host key verification
+        # This prevents "Host key verification failed" errors when fetching via SSH
+        env = os.environ.copy()
+        env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
         try:
             # Change to repository directory
             os.chdir(repo_path)
@@ -264,6 +275,7 @@ def update_repository(repo_path: str, branch: str | None = None) -> bool:
                 text=True,
                 check=True,
                 timeout=60,  # 1 minute timeout for fetching
+                env=env,
             )
             logger.debug("Fetch output: %s", result.stdout)
 
@@ -285,6 +297,7 @@ def update_repository(repo_path: str, branch: str | None = None) -> bool:
                 text=True,
                 check=True,
                 timeout=60,
+                env=env,
             )
             logger.debug("Pull output: %s", result.stdout)
 

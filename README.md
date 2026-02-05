@@ -139,11 +139,15 @@ Lucidity MCP now supports analyzing remote repositories without requiring a loca
 3. **Update automatically** by fetching latest changes if the repository already exists
 4. **Checkout specific branches** when specified using the `@branch` syntax
 5. **Work seamlessly** with the existing analysis workflow
+6. **Skip SSH host key verification** for convenience (see security note below)
 
 **Prerequisites for remote repositories:**
 - Git must be installed and accessible
 - For SSH URLs (default), a valid SSH key must be configured for authentication
 - For HTTPS URLs, appropriate credentials may be required
+
+**Security Note:**
+SSH host key verification is automatically disabled when cloning or updating repositories via SSH. This allows seamless operation without requiring manual host key acceptance. While this is convenient for development and automated workflows, be aware that it bypasses a security measure that normally protects against man-in-the-middle attacks.
 
 **Example usage:**
 ```python
