@@ -304,13 +304,40 @@ def analyze_changes(workspace_root: str = "", path: str = "") -> dict[str, Any]:
     and provides analysis instructions which get passed back to the AI model
     through the Model Context Protocol.
 
+    IMPORTANT FOR AI AGENTS:
+    ========================
+    When the MCP server is running remotely (not on the same machine as the repository),
+    you MUST provide a REMOTE repository URL, not a local filesystem path.
+    
+    ❌ WRONG: workspace_root="/home/runner/_work/repo/repo" 
+       (local path that doesn't exist on MCP server)
+    
+    ✅ CORRECT: workspace_root="username/repo" 
+       or workspace_root="git@github.com:username/repo.git@branch-name"
+       (remote URL that can be cloned by MCP server)
+
+    Common scenarios:
+    - GitHub Actions / CI/CD: Use "username/repo@branch" format, NOT the local checkout path
+    - Analyzing remote repositories: Always use remote URL format
+    - Local development: Only use filesystem paths if MCP server runs on same machine
+
     Args:
-        workspace_root: The root directory of the workspace/git repository,
-                       or a remote git URL (e.g., git@github.com:user/repo.git,
-                       https://github.com/user/repo.git, or user/repo for GitHub).
-                       You can specify a branch by appending @branch to the URL
-                       (e.g., user/repo@develop, git@github.com:user/repo.git@feature-branch)
-        path: Optional specific file path to analyze
+        workspace_root: REQUIRED. The repository to analyze. Choose the appropriate format:
+        
+                       **REMOTE REPOSITORIES** (most common, especially in CI/CD):
+                       - Short format: "username/repo" (uses default branch)
+                       - With branch: "username/repo@branch-name"
+                       - SSH URL: "git@github.com:username/repo.git"
+                       - SSH with branch: "git@github.com:username/repo.git@branch-name"
+                       - HTTPS URL: "https://github.com/username/repo.git"
+                       - HTTPS with branch: "https://github.com/username/repo.git@branch-name"
+                       
+                       **LOCAL REPOSITORIES** (only when MCP server has filesystem access):
+                       - Filesystem path: "/path/to/local/repo"
+                       
+                       If you're unsure, use the remote format (username/repo).
+                       
+        path: Optional specific file path to analyze (relative to repository root)
 
     Returns:
         Structured git diff data with analysis instructions for the AI
@@ -323,6 +350,30 @@ def analyze_changes(workspace_root: str = "", path: str = "") -> dict[str, Any]:
     # Get git diff
     logger.debug("Fetching git diff...")
     diff_content, staged_content = get_git_diff(workspace_root, path)
+    
+    # Check if repository access failed (returns empty strings)
+    if not diff_content and not staged_content:
+        # Check if this looks like a local path that might not exist on MCP server
+        if workspace_root.startswith('/') or workspace_root.startswith('./') or workspace_root.startswith('../'):
+            return {
+                "status": "error",
+                "message": (
+                    f"Could not access or clone repository: {workspace_root}\n\n"
+                    "This appears to be a local filesystem path. If the MCP server is running "
+                    "remotely (separate from your local machine), you must provide a REMOTE "
+                    "repository URL instead.\n\n"
+                    "✅ CORRECT formats:\n"
+                    "  - 'username/repo' (for GitHub default branch)\n"
+                    "  - 'username/repo@branch-name' (for specific branch)\n"
+                    "  - 'git@github.com:username/repo.git@branch-name'\n\n"
+                    "❌ INCORRECT (local paths that don't exist on MCP server):\n"
+                    "  - '/home/runner/_work/repo/repo'\n"
+                    "  - '/github/workspace/project'\n"
+                    "  - './local-checkout'\n\n"
+                    "In CI/CD contexts (GitHub Actions, etc.), extract the repository URL "
+                    "from environment variables instead of using the local checkout path."
+                )
+            }
 
     # Get list of all changed files
     changed_files = get_changed_files(workspace_root)

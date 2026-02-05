@@ -408,7 +408,16 @@ def ensure_repository(workspace_root: str) -> str | None:
     if os.path.exists(workspace_root):
         logger.warning("Path %s exists but is not a git repository", workspace_root)
     else:
-        logger.warning("Path %s does not exist and could not be parsed as a remote URL", workspace_root)
+        # Path doesn't exist - provide helpful guidance
+        if workspace_root.startswith('/') or workspace_root.startswith('./') or workspace_root.startswith('../'):
+            logger.error(
+                "Local path '%s' does not exist. "
+                "If the MCP server is running remotely, use a remote repository URL instead. "
+                "Examples: 'username/repo', 'username/repo@branch', or 'git@github.com:username/repo.git'",
+                workspace_root
+            )
+        else:
+            logger.warning("Path %s does not exist and could not be parsed as a remote URL", workspace_root)
 
     return None
 

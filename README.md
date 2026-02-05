@@ -212,34 +212,167 @@ The cleanup process:
 
 ### Instructions for AI Agents
 
-If you are an AI agent using this tool, follow these guidelines:
+If you are an AI agent using this tool, **read this carefully** to avoid common mistakes:
 
-1. **Default Usage**: For most cases, use the short format `username/repo` which will clone the default branch
+#### ⚠️ CRITICAL: Remote vs Local Repositories
+
+**When the MCP server is running remotely** (separate from the repository location), you **MUST** use remote repository URLs, not local filesystem paths.
+
+❌ **COMMON MISTAKE** - Using local paths that don't exist on MCP server:
+```python
+# These will FAIL if MCP server doesn't have access to this filesystem:
+analyze_changes(workspace_root="/home/runner/_work/repo/repo")
+analyze_changes(workspace_root="/github/workspace/myproject")
+analyze_changes(workspace_root="./local-checkout")
+```
+
+✅ **CORRECT** - Using remote repository URLs:
+```python
+# These will work because MCP server can clone from remote:
+analyze_changes(workspace_root="username/repo")
+analyze_changes(workspace_root="username/repo@feature-branch")
+analyze_changes(workspace_root="git@github.com:username/repo.git@branch-name")
+```
+
+#### Decision Tree: Which Format Should I Use?
+
+```
+Is the MCP server running on the same machine as the repository?
+│
+├─ NO (most common in CI/CD, GitHub Actions, remote servers)
+│  └─> Use REMOTE format: "username/repo@branch"
+│
+└─ YES (local development with local MCP server)
+   └─> Can use LOCAL format: "/path/to/repo"
+```
+
+#### Usage Guidelines
+
+1. **Remote Repository (Default/Recommended)**
+   
+   Use this format in most cases, especially:
+   - GitHub Actions / CI/CD pipelines
+   - Remote MCP server deployments
+   - When analyzing repositories you don't have locally
+   
    ```python
+   # Analyze default branch
    analyze_changes(workspace_root="username/repo")
-   ```
-
-2. **Specify Branch**: If you need to analyze a specific branch (e.g., a development branch, pull request branch, or feature branch), append `@branch-name`:
-   ```python
+   
+   # Analyze specific branch
    analyze_changes(workspace_root="username/repo@develop")
    analyze_changes(workspace_root="username/repo@feature/new-api")
+   
+   # Full URL formats also work
+   analyze_changes(workspace_root="git@github.com:username/repo.git@branch")
+   analyze_changes(workspace_root="https://github.com/username/repo.git@main")
    ```
 
-3. **Local Repositories**: If the user provides a local path, use it directly:
+2. **GitHub Actions / CI/CD Context**
+   
+   When running in CI/CD, the local checkout path is on the **CI runner**, not the MCP server.
+   
+   ❌ **DON'T** use the CI workspace path:
    ```python
-   analyze_changes(workspace_root="/home/user/project")
+   # These paths exist on CI runner, NOT on MCP server
+   analyze_changes(workspace_root="/home/runner/_work/repo/repo")
+   analyze_changes(workspace_root="${GITHUB_WORKSPACE}")
+   ```
+   
+   ✅ **DO** extract repository info from CI environment:
+   ```python
+   # Use repository slug from CI environment variables
+   # GitHub Actions: $GITHUB_REPOSITORY = "username/repo"
+   analyze_changes(workspace_root="username/repo@feature-branch")
+   
+   # Or construct from environment variables:
+   # repo = os.environ['GITHUB_REPOSITORY']  # e.g., "username/repo"
+   # branch = os.environ['GITHUB_REF_NAME']   # e.g., "feature-branch"
+   analyze_changes(workspace_root=f"{repo}@{branch}")
    ```
 
-4. **Workflow Example**: When a user asks to analyze their code changes:
-   - Ask if they want to analyze a specific branch (if not specified)
-   - Use the appropriate format based on their response
-   - The tool will handle cloning, caching, and updating automatically
+3. **Local Development (Only if MCP Server Has Access)**
+   
+   Only use filesystem paths when:
+   - MCP server runs on your local machine
+   - The repository is on the same filesystem
+   - You're developing and testing locally
+   
+   ```python
+   analyze_changes(workspace_root="/home/user/projects/myrepo")
+   ```
 
-5. **Error Handling**: If cloning fails:
-   - Check if the repository URL is correct
-   - Verify the branch name exists
-   - Ensure SSH keys are configured for private repositories
-   - Try HTTPS format if SSH fails
+4. **Handling User Input**
+   
+   When a user provides a path:
+   
+   ```python
+   # If user gives you a path like "/path/to/repo"
+   # and you're in a remote context, ask for the repository URL:
+   
+   user_path = "/home/runner/_work/repo/repo"
+   
+   # ASK: "What is the GitHub repository URL for this project?"
+   # Then use: "username/repo@branch" format
+   
+   # If unsure whether it's local or remote:
+   if user_path.startswith('/') or user_path.startswith('./'):
+       # Probably a local path - ask for remote URL instead
+       # "I need the repository URL (e.g., username/repo) to analyze remotely"
+   ```
+
+5. **Error Handling**
+   
+   If you see "Could not access or clone repository":
+   
+   ```
+   ✓ Check if you used a local path instead of remote URL
+   ✓ Verify the repository URL is correct (username/repo format)
+   ✓ Confirm the branch name exists
+   ✓ Ensure SSH keys are configured for private repositories
+   ✓ Try HTTPS format if SSH fails
+   ```
+
+#### Quick Reference
+
+| Context | Format to Use | Example |
+|---------|---------------|---------|
+| GitHub Actions | `username/repo@branch` | `myorg/myapp@main` |
+| CI/CD Pipeline | `username/repo@branch` | `company/project@develop` |
+| Remote Analysis | `username/repo@branch` | `user/repo@feature-x` |
+| Local MCP Server | `/path/to/repo` | `/home/dev/project` |
+
+#### Example Scenarios
+
+**Scenario 1: Analyzing a PR in GitHub Actions**
+```python
+# ❌ WRONG - uses local CI runner path
+analyze_changes(workspace_root="/home/runner/_work/myrepo/myrepo")
+
+# ✅ CORRECT - uses remote repository reference
+analyze_changes(workspace_root="myorg/myrepo@pr-123-feature")
+```
+
+**Scenario 2: User asks to analyze their repository**
+```
+User: "Can you analyze the code in /workspace/myproject?"
+
+❌ Agent: analyze_changes(workspace_root="/workspace/myproject")
+
+✅ Agent: "I need the GitHub repository URL to analyze remotely. 
+          What's the repository (e.g., username/repo)?"
+User: "It's myusername/myproject"
+Agent: analyze_changes(workspace_root="myusername/myproject")
+```
+
+**Scenario 3: Analyzing a specific branch**
+```python
+# User wants to analyze a feature branch
+analyze_changes(workspace_root="company/app@feature/user-auth")
+
+# Or using full SSH URL
+analyze_changes(workspace_root="git@github.com:company/app.git@feature/user-auth")
+```
 
 ## 💻 Development
 
