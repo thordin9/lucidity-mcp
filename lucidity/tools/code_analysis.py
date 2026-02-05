@@ -13,17 +13,28 @@ from ..log import logger
 from .git_utils import ensure_repository
 
 
-def get_git_diff(workspace_root: str, path: str | None = None) -> tuple[str, str]:
-    """Get the current git diff and the staged files content.
+def get_git_diff(workspace_root: str, path: str | None = None, commits: str | None = None) -> tuple[str, str]:
+    """Get the current git diff and the staged files content, or diff between commits.
 
     Args:
         workspace_root: The root directory of the workspace/git repository (can be a remote URL)
         path: Optional specific file path to get diff for
+        commits: Optional commit range (e.g., "HEAD~1..HEAD", "abc123^..abc123").
+                If provided, gets diff between commits instead of uncommitted changes.
+                Common patterns:
+                - "HEAD~1..HEAD" - last commit
+                - "HEAD~5..HEAD" - last 5 commits
+                - "abc123^..abc123" - specific commit
+                - "main..feature-branch" - changes in feature branch
 
     Returns:
-        Tuple of (diff_content, staged_files_content)
+        Tuple of (diff_content, staged_files_content).
+        When commits parameter is used, staged_files_content will be empty.
     """
-    logger.debug("Getting git diff%s in workspace %s", f" for path: {path}" if path else "", workspace_root)
+    logger.debug("Getting git diff%s in workspace %s%s", 
+                f" for path: {path}" if path else "", 
+                workspace_root,
+                f" for commits: {commits}" if commits else "")
 
     try:
         # Ensure we have a local git repository (clone if remote)
@@ -49,27 +60,42 @@ def get_git_diff(workspace_root: str, path: str | None = None) -> tuple[str, str
             ).stdout.strip()
             logger.debug("Git root directory: %s", git_root)
 
-            # Get the diff
-            diff_command = ["git", "diff"]
-            if path:
-                # Normalize path for Windows/WSL
-                normalized_path = path.replace("\\", "/")
-                diff_command.append(normalized_path)
+            # Build diff command based on whether we're analyzing commits or working directory
+            if commits:
+                # Analyze committed changes
+                diff_command = ["git", "diff", commits]
+                if path:
+                    normalized_path = path.replace("\\", "/")
+                    diff_command.append(normalized_path)
+                
+                logger.debug("Running diff command for commits: %s", diff_command)
+                diff = subprocess.run(diff_command, capture_output=True, text=True, check=True).stdout
+                logger.debug("Git diff size: %d bytes", len(diff))
+                
+                # No staged content when analyzing commits
+                return diff, ""
+            else:
+                # Analyze uncommitted changes (original behavior)
+                diff_command = ["git", "diff"]
+                if path:
+                    # Normalize path for Windows/WSL
+                    normalized_path = path.replace("\\", "/")
+                    diff_command.append(normalized_path)
 
-            logger.debug("Running diff command: %s", diff_command)
-            diff = subprocess.run(diff_command, capture_output=True, text=True, check=True).stdout
-            logger.debug("Git diff size: %d bytes", len(diff))
+                logger.debug("Running diff command: %s", diff_command)
+                diff = subprocess.run(diff_command, capture_output=True, text=True, check=True).stdout
+                logger.debug("Git diff size: %d bytes", len(diff))
 
-            # Get the staged files content
-            staged_command = ["git", "diff", "--cached"]
-            if path:
-                staged_command.append(normalized_path)
+                # Get the staged files content
+                staged_command = ["git", "diff", "--cached"]
+                if path:
+                    staged_command.append(normalized_path)
 
-            logger.debug("Running staged command: %s", staged_command)
-            staged = subprocess.run(staged_command, capture_output=True, text=True, check=True).stdout
-            logger.debug("Git staged diff size: %d bytes", len(staged))
+                logger.debug("Running staged command: %s", staged_command)
+                staged = subprocess.run(staged_command, capture_output=True, text=True, check=True).stdout
+                logger.debug("Git staged diff size: %d bytes", len(staged))
 
-            return diff, staged
+                return diff, staged
 
         finally:
             # Change back to the original directory
@@ -294,10 +320,10 @@ def detect_language(filename: str) -> str:
 
 
 @mcp.tool("analyze_changes")
-def analyze_changes(workspace_root: str = "", path: str = "") -> dict[str, Any]:
+def analyze_changes(workspace_root: str = "", path: str = "", commits: str = "") -> dict[str, Any]:
     """Prepare git changes for analysis through MCP.
 
-    This tool examines the current git diff, extracts changed code,
+    This tool examines git changes (either uncommitted or committed), extracts changed code,
     and prepares structured data with context for the AI to analyze.
 
     The tool doesn't perform analysis itself - it formats the git diff data
@@ -315,6 +341,30 @@ def analyze_changes(workspace_root: str = "", path: str = "") -> dict[str, Any]:
     ✅ CORRECT: workspace_root="username/repo" 
        or workspace_root="git@github.com:username/repo.git@branch-name"
        (remote URL that can be cloned by MCP server)
+
+    ANALYZING DIFFERENT TYPES OF CHANGES:
+    ======================================
+    
+    **For Uncommitted Changes** (default behavior):
+    - Use without 'commits' parameter
+    - Analyzes working directory changes (git diff)
+    - Example: analyze_changes(workspace_root="username/repo")
+    
+    **For Committed Changes** (e.g., remote repos, historical analysis):
+    - Use 'commits' parameter to specify commit range
+    - Analyzes changes between commits (git diff commit1..commit2)
+    - Common patterns:
+      * commits="HEAD~1..HEAD" - analyze last commit
+      * commits="HEAD~5..HEAD" - analyze last 5 commits
+      * commits="abc123^..abc123" - analyze specific commit
+      * commits="main..feature-branch" - analyze branch differences
+    - Example: analyze_changes(workspace_root="username/repo", commits="HEAD~1..HEAD")
+
+    **When to use commits parameter:**
+    - Remote repositories without local changes (freshly cloned)
+    - CI/CD pipelines analyzing merged commits
+    - Historical code review
+    - Analyzing specific PRs or commits
 
     Common scenarios:
     - GitHub Actions / CI/CD: Use "username/repo@branch" format, NOT the local checkout path
@@ -338,11 +388,24 @@ def analyze_changes(workspace_root: str = "", path: str = "") -> dict[str, Any]:
                        If you're unsure, use the remote format (username/repo).
                        
         path: Optional specific file path to analyze (relative to repository root)
+        
+        commits: Optional commit range to analyze. Use this for remote repositories or 
+                committed changes instead of uncommitted changes.
+                Examples:
+                - "HEAD~1..HEAD" - last commit
+                - "HEAD~5..HEAD" - last 5 commits  
+                - "abc123^..abc123" - specific commit by hash
+                - "main..feature-branch" - changes in feature branch vs main
+                
+                If not provided, analyzes uncommitted changes (git diff of working directory).
 
     Returns:
         Structured git diff data with analysis instructions for the AI
     """
-    logger.info("Starting git change analysis%s in workspace %s", f" for {path}" if path else "", workspace_root)
+    logger.info("Starting git change analysis%s in workspace %s%s", 
+                f" for {path}" if path else "", 
+                workspace_root,
+                f" with commits: {commits}" if commits else "")
 
     if not workspace_root:
         return {"status": "error", "message": "workspace_root parameter is required"}
@@ -382,7 +445,7 @@ def analyze_changes(workspace_root: str = "", path: str = "") -> dict[str, Any]:
 
     # Get git diff
     logger.debug("Fetching git diff...")
-    diff_content, staged_content = get_git_diff(workspace_root, path)
+    diff_content, staged_content = get_git_diff(workspace_root, path, commits if commits else None)
 
     # Get list of all changed files
     changed_files = get_changed_files(workspace_root)
@@ -395,8 +458,27 @@ def analyze_changes(workspace_root: str = "", path: str = "") -> dict[str, Any]:
     logger.debug("Combined diff size: %d bytes", len(combined_diff))
 
     if not combined_diff:
-        logger.warning("No changes detected in git diff")
-        return {"status": "no_changes", "message": "No changes detected in the git diff", "file_list": []}
+        if commits:
+            logger.warning("No changes detected in commit range: %s", commits)
+            return {
+                "status": "no_changes", 
+                "message": f"No changes detected in commit range: {commits}", 
+                "file_list": []
+            }
+        else:
+            logger.warning("No uncommitted changes detected")
+            return {
+                "status": "no_changes", 
+                "message": (
+                    "No uncommitted changes detected in the git diff.\n\n"
+                    "If you're analyzing a remote repository, use the 'commits' parameter to analyze "
+                    "committed changes instead. Examples:\n"
+                    "  - commits='HEAD~1..HEAD' (last commit)\n"
+                    "  - commits='HEAD~5..HEAD' (last 5 commits)\n"
+                    "  - commits='abc123^..abc123' (specific commit)"
+                ),
+                "file_list": []
+            }
 
     # Parse the diff
     logger.debug("Parsing git diff...")

@@ -248,7 +248,44 @@ Is the MCP server running on the same machine as the repository?
 
 #### Usage Guidelines
 
-1. **Remote Repository (Default/Recommended)**
+1. **Analyzing Uncommitted Changes (Local Development)**
+   
+   Use when you have local changes in your working directory:
+   
+   ```python
+   # Analyze uncommitted changes in working directory
+   analyze_changes(workspace_root="/path/to/local/repo")
+   analyze_changes(workspace_root="username/repo")  # if already cloned remotely
+   ```
+
+2. **Analyzing Committed Changes (Remote Repositories / Historical Analysis)**
+   
+   **This is the recommended approach for remote repositories!**
+   
+   Use the `commits` parameter to analyze committed changes:
+   
+   ```python
+   # Analyze last commit
+   analyze_changes(workspace_root="username/repo", commits="HEAD~1..HEAD")
+   
+   # Analyze last 5 commits
+   analyze_changes(workspace_root="username/repo", commits="HEAD~5..HEAD")
+   
+   # Analyze a specific commit
+   analyze_changes(workspace_root="username/repo", commits="abc123^..abc123")
+   
+   # Analyze differences between branches
+   analyze_changes(workspace_root="username/repo", commits="main..feature-branch")
+   ```
+   
+   **Common commit range patterns:**
+   - `"HEAD~1..HEAD"` - Last commit only
+   - `"HEAD~5..HEAD"` - Last 5 commits
+   - `"abc123^..abc123"` - Specific commit by hash
+   - `"main..develop"` - All changes in develop not in main
+   - `"v1.0..v2.0"` - Changes between tags
+
+3. **Remote Repository (Default/Recommended)**
    
    Use this format in most cases, especially:
    - GitHub Actions / CI/CD pipelines
@@ -268,7 +305,7 @@ Is the MCP server running on the same machine as the repository?
    analyze_changes(workspace_root="https://github.com/username/repo.git@main")
    ```
 
-2. **GitHub Actions / CI/CD Context**
+4. **GitHub Actions / CI/CD Context**
    
    When running in CI/CD, the local checkout path is on the **CI runner**, not the MCP server.
    
@@ -279,18 +316,24 @@ Is the MCP server running on the same machine as the repository?
    analyze_changes(workspace_root="/github/workspace")  # Even if set via CI environment
    ```
    
-   ✅ **DO** extract repository info from CI environment:
+   ✅ **DO** extract repository info from CI environment and use commits parameter:
    ```python
    # Use repository slug from CI environment variables
    # GitHub Actions example: GITHUB_REPOSITORY = "username/repo"
-   analyze_changes(workspace_root="username/repo@feature-branch")
    
-   # Or construct dynamically in Python from environment variables:
+   # Analyze the last commit in a PR or push
    import os
    repo = os.environ.get('GITHUB_REPOSITORY', 'username/repo')  # e.g., "username/repo"
    branch = os.environ.get('GITHUB_REF_NAME', 'main')           # e.g., "feature-branch"
-   analyze_changes(workspace_root=f"{repo}@{branch}")
-   analyze_changes(workspace_root=f"{repo}@{branch}")
+   
+   # Analyze last commit
+   analyze_changes(workspace_root=f"{repo}@{branch}", commits="HEAD~1..HEAD")
+   
+   # Or analyze multiple recent commits
+   analyze_changes(workspace_root=f"{repo}@{branch}", commits="HEAD~5..HEAD")
+   ```
+
+5. **Local Development (Only if MCP Server Has Access)**
    ```
 
 3. **Local Development (Only if MCP Server Has Access)**
@@ -304,7 +347,7 @@ Is the MCP server running on the same machine as the repository?
    analyze_changes(workspace_root="/home/user/projects/myrepo")
    ```
 
-4. **Handling User Input**
+6. **Handling User Input**
    
    When a user provides a path:
    
@@ -315,15 +358,23 @@ Is the MCP server running on the same machine as the repository?
    user_path = "/home/runner/_work/repo/repo"
    
    # ASK: "What is the GitHub repository URL for this project?"
-   # Then use: "username/repo@branch" format
+   # Then use: "username/repo@branch" format with commits parameter
    
    # If unsure whether it's local or remote:
    if user_path.startswith('/') or user_path.startswith('./'):
        # Probably a local path - ask for remote URL instead
        # "I need the repository URL (e.g., username/repo) to analyze remotely"
+       # "Should I analyze uncommitted changes or recent commits?"
    ```
 
-5. **Error Handling**
+7. **Error Handling**
+   
+   If you see "No uncommitted changes detected":
+   
+   ```
+   ✓ For remote repositories, use the 'commits' parameter to analyze committed changes
+   ✓ Example: commits="HEAD~1..HEAD" for last commit
+   ```
    
    If you see "Could not access or clone repository":
    
@@ -337,12 +388,13 @@ Is the MCP server running on the same machine as the repository?
 
 #### Quick Reference
 
-| Context | Format to Use | Example |
-|---------|---------------|---------|
-| GitHub Actions | `username/repo@branch` | `myorg/myapp@main` |
-| CI/CD Pipeline | `username/repo@branch` | `company/project@develop` |
-| Remote Analysis | `username/repo@branch` | `user/repo@feature-x` |
-| Local MCP Server | `/path/to/repo` | `/home/dev/project` |
+| Context | Format to Use | Commits Parameter | Example |
+|---------|---------------|-------------------|---------|
+| GitHub Actions (analyze PR) | `username/repo@branch` | `HEAD~1..HEAD` or `HEAD~N..HEAD` | `myorg/myapp@pr-branch` with `commits="HEAD~1..HEAD"` |
+| CI/CD Pipeline | `username/repo@branch` | `HEAD~1..HEAD` | `company/project@develop` with `commits="HEAD~1..HEAD"` |
+| Remote Analysis (last commit) | `username/repo@branch` | `HEAD~1..HEAD` | `user/repo@main` with `commits="HEAD~1..HEAD"` |
+| Remote Analysis (multiple commits) | `username/repo@branch` | `HEAD~5..HEAD` | `user/repo@feature` with `commits="HEAD~5..HEAD"` |
+| Local Uncommitted Changes | `/path/to/repo` | _(none)_ | `/home/dev/project` |
 
 #### Example Scenarios
 
@@ -351,30 +403,49 @@ Is the MCP server running on the same machine as the repository?
 # ❌ WRONG - uses local CI runner path
 analyze_changes(workspace_root="/home/runner/_work/myrepo/myrepo")
 
-# ✅ CORRECT - uses remote repository reference
-analyze_changes(workspace_root="myorg/myrepo@pr-123-feature")
+# ✅ CORRECT - uses remote repository reference with commits
+analyze_changes(workspace_root="myorg/myrepo@pr-123-feature", commits="HEAD~1..HEAD")
 ```
 
-**Scenario 2: User asks to analyze their repository**
+**Scenario 2: User asks to analyze their remote repository**
 ```
-User: "Can you analyze the code in /workspace/myproject?"
+User: "Can you analyze the code in my repository username/myproject?"
 
-❌ Agent: analyze_changes(workspace_root="/workspace/myproject")
-
-✅ Agent: "I need the GitHub repository URL to analyze remotely. 
-          What's the repository (e.g., username/repo)?"
-User: "It's myusername/myproject"
-Agent: analyze_changes(workspace_root="myusername/myproject")
+✅ Agent: "Should I analyze uncommitted changes or recent commits?"
+User: "Analyze the last commit"
+Agent: analyze_changes(workspace_root="username/myproject", commits="HEAD~1..HEAD")
 ```
 
-**Scenario 3: Analyzing a specific branch**
+**Scenario 3: Analyzing a specific branch with multiple commits**
 ```python
-# User wants to analyze a feature branch
-analyze_changes(workspace_root="company/app@feature/user-auth")
+# Analyze last 5 commits in a feature branch
+analyze_changes(
+    workspace_root="company/app@feature/user-auth",
+    commits="HEAD~5..HEAD"
+)
 
 # Or using full SSH URL
-analyze_changes(workspace_root="git@github.com:company/app.git@feature/user-auth")
+analyze_changes(
+    workspace_root="git@github.com:company/app.git@feature/user-auth",
+    commits="HEAD~5..HEAD"
+)
 ```
+
+**Scenario 4: Historical code review**
+```python
+# Analyze a specific commit by hash
+analyze_changes(
+    workspace_root="username/repo",
+    commits="abc123^..abc123"
+)
+
+# Analyze changes between two tags
+analyze_changes(
+    workspace_root="username/repo",
+    commits="v1.0..v2.0"
+)
+```
+
 
 ## 💻 Development
 
