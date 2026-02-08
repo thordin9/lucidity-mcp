@@ -10,24 +10,40 @@ from typing import Any
 
 from ..context import mcp
 from ..log import logger
+from .git_utils import ensure_repository
 
 
-def get_git_diff(workspace_root: str, path: str | None = None) -> tuple[str, str]:
-    """Get the current git diff and the staged files content.
+def get_git_diff(workspace_root: str, path: str | None = None, commits: str | None = None) -> tuple[str, str]:
+    """Get the current git diff and the staged files content, or diff between commits.
 
     Args:
-        workspace_root: The root directory of the workspace/git repository
+        workspace_root: The root directory of the workspace/git repository (can be a remote URL)
         path: Optional specific file path to get diff for
+        commits: Optional commit range (e.g., "HEAD~1..HEAD", "abc123^..abc123").
+                If provided, gets diff between commits instead of uncommitted changes.
+                Common patterns:
+                - "HEAD~1..HEAD" - last commit
+                - "HEAD~5..HEAD" - last 5 commits
+                - "abc123^..abc123" - specific commit
+                - "main..feature-branch" - changes in feature branch
 
     Returns:
-        Tuple of (diff_content, staged_files_content)
+        Tuple of (diff_content, staged_files_content).
+        When commits parameter is used, staged_files_content will be empty.
     """
-    logger.debug("Getting git diff%s in workspace %s", f" for path: {path}" if path else "", workspace_root)
+    logger.debug("Getting git diff%s in workspace %s%s", 
+                f" for path: {path}" if path else "", 
+                workspace_root,
+                f" for commits: {commits}" if commits else "")
 
     try:
-        if not os.path.exists(os.path.join(workspace_root, ".git")):
-            logger.error("No .git directory found in workspace root: %s", workspace_root)
+        # Ensure we have a local git repository (clone if remote)
+        actual_repo_path = ensure_repository(workspace_root)
+        if not actual_repo_path:
+            logger.error("Could not access or clone repository: %s", workspace_root)
             return "", ""
+
+        workspace_root = actual_repo_path
 
         # Store current directory
         current_dir = os.getcwd()
@@ -44,27 +60,42 @@ def get_git_diff(workspace_root: str, path: str | None = None) -> tuple[str, str
             ).stdout.strip()
             logger.debug("Git root directory: %s", git_root)
 
-            # Get the diff
-            diff_command = ["git", "diff"]
-            if path:
-                # Normalize path for Windows/WSL
-                normalized_path = path.replace("\\", "/")
-                diff_command.append(normalized_path)
+            # Build diff command based on whether we're analyzing commits or working directory
+            if commits:
+                # Analyze committed changes
+                diff_command = ["git", "diff", commits]
+                if path:
+                    normalized_path = path.replace("\\", "/")
+                    diff_command.append(normalized_path)
+                
+                logger.debug("Running diff command for commits: %s", diff_command)
+                diff = subprocess.run(diff_command, capture_output=True, text=True, check=True).stdout
+                logger.debug("Git diff size: %d bytes", len(diff))
+                
+                # No staged content when analyzing commits
+                return diff, ""
+            else:
+                # Analyze uncommitted changes (original behavior)
+                diff_command = ["git", "diff"]
+                if path:
+                    # Normalize path for Windows/WSL
+                    normalized_path = path.replace("\\", "/")
+                    diff_command.append(normalized_path)
 
-            logger.debug("Running diff command: %s", diff_command)
-            diff = subprocess.run(diff_command, capture_output=True, text=True, check=True).stdout
-            logger.debug("Git diff size: %d bytes", len(diff))
+                logger.debug("Running diff command: %s", diff_command)
+                diff = subprocess.run(diff_command, capture_output=True, text=True, check=True).stdout
+                logger.debug("Git diff size: %d bytes", len(diff))
 
-            # Get the staged files content
-            staged_command = ["git", "diff", "--cached"]
-            if path:
-                staged_command.append(normalized_path)
+                # Get the staged files content
+                staged_command = ["git", "diff", "--cached"]
+                if path:
+                    staged_command.append(normalized_path)
 
-            logger.debug("Running staged command: %s", staged_command)
-            staged = subprocess.run(staged_command, capture_output=True, text=True, check=True).stdout
-            logger.debug("Git staged diff size: %d bytes", len(staged))
+                logger.debug("Running staged command: %s", staged_command)
+                staged = subprocess.run(staged_command, capture_output=True, text=True, check=True).stdout
+                logger.debug("Git staged diff size: %d bytes", len(staged))
 
-            return diff, staged
+                return diff, staged
 
         finally:
             # Change back to the original directory
@@ -83,7 +114,7 @@ def get_changed_files(workspace_root: str) -> list[str]:
     """Get a list of all modified files (both staged and unstaged).
 
     Args:
-        workspace_root: The root directory of the workspace/git repository
+        workspace_root: The root directory of the workspace/git repository (can be a remote URL)
 
     Returns:
         List of modified file paths
@@ -91,9 +122,13 @@ def get_changed_files(workspace_root: str) -> list[str]:
     logger.debug("Getting changed files in workspace %s", workspace_root)
 
     try:
-        if not os.path.exists(os.path.join(workspace_root, ".git")):
-            logger.error("No .git directory found in workspace root: %s", workspace_root)
+        # Ensure we have a local git repository (clone if remote)
+        actual_repo_path = ensure_repository(workspace_root)
+        if not actual_repo_path:
+            logger.error("Could not access or clone repository: %s", workspace_root)
             return []
+
+        workspace_root = actual_repo_path
 
         # Store current directory
         current_dir = os.getcwd()
@@ -285,31 +320,132 @@ def detect_language(filename: str) -> str:
 
 
 @mcp.tool("analyze_changes")
-def analyze_changes(workspace_root: str = "", path: str = "") -> dict[str, Any]:
+def analyze_changes(workspace_root: str = "", path: str = "", commits: str | None = None) -> dict[str, Any]:
     """Prepare git changes for analysis through MCP.
 
-    This tool examines the current git diff, extracts changed code,
+    This tool examines git changes (either uncommitted or committed), extracts changed code,
     and prepares structured data with context for the AI to analyze.
 
     The tool doesn't perform analysis itself - it formats the git diff data
     and provides analysis instructions which get passed back to the AI model
     through the Model Context Protocol.
 
+    IMPORTANT FOR AI AGENTS:
+    ========================
+    When the MCP server is running remotely (not on the same machine as the repository),
+    you MUST provide a REMOTE repository URL, not a local filesystem path.
+    
+    ❌ WRONG: workspace_root="/home/runner/_work/repo/repo" 
+       (local path that doesn't exist on MCP server)
+    
+    ✅ CORRECT: workspace_root="username/repo" 
+       or workspace_root="git@github.com:username/repo.git@branch-name"
+       (remote URL that can be cloned by MCP server)
+
+    ANALYZING DIFFERENT TYPES OF CHANGES:
+    ======================================
+    
+    **For Uncommitted Changes** (default behavior):
+    - Use without 'commits' parameter
+    - Analyzes working directory changes (git diff)
+    - Example: analyze_changes(workspace_root="username/repo")
+    
+    **For Committed Changes** (e.g., remote repos, historical analysis):
+    - Use 'commits' parameter to specify commit range
+    - Analyzes changes between commits (git diff commit1..commit2)
+    - Common patterns:
+      * commits="HEAD~1..HEAD" - analyze last commit
+      * commits="HEAD~5..HEAD" - analyze last 5 commits
+      * commits="abc123^..abc123" - analyze specific commit
+      * commits="main..feature-branch" - analyze branch differences
+    - Example: analyze_changes(workspace_root="username/repo", commits="HEAD~1..HEAD")
+
+    **When to use commits parameter:**
+    - Remote repositories without local changes (freshly cloned)
+    - CI/CD pipelines analyzing merged commits
+    - Historical code review
+    - Analyzing specific PRs or commits
+
+    Common scenarios:
+    - GitHub Actions / CI/CD: Use "username/repo@branch" format, NOT the local checkout path
+    - Analyzing remote repositories: Always use remote URL format
+    - Local development: Only use filesystem paths if MCP server runs on same machine
+
     Args:
-        workspace_root: The root directory of the workspace/git repository
-        path: Optional specific file path to analyze
+        workspace_root: REQUIRED. The repository to analyze. Choose the appropriate format:
+        
+                       **REMOTE REPOSITORIES** (most common, especially in CI/CD):
+                       - Short format: "username/repo" (uses default branch)
+                       - With branch: "username/repo@branch-name"
+                       - SSH URL: "git@github.com:username/repo.git"
+                       - SSH with branch: "git@github.com:username/repo.git@branch-name"
+                       - HTTPS URL: "https://github.com/username/repo.git"
+                       - HTTPS with branch: "https://github.com/username/repo.git@branch-name"
+                       
+                       **LOCAL REPOSITORIES** (only when MCP server has filesystem access):
+                       - Filesystem path: "/path/to/local/repo"
+                       
+                       If you're unsure, use the remote format (username/repo).
+                       
+        path: Optional specific file path to analyze (relative to repository root)
+        
+        commits: Optional commit range to analyze. Use this for remote repositories or 
+                committed changes instead of uncommitted changes.
+                Examples:
+                - "HEAD~1..HEAD" - last commit
+                - "HEAD~5..HEAD" - last 5 commits  
+                - "abc123^..abc123" - specific commit by hash
+                - "main..feature-branch" - changes in feature branch vs main
+                
+                If not provided, analyzes uncommitted changes (git diff of working directory).
 
     Returns:
         Structured git diff data with analysis instructions for the AI
     """
-    logger.info("Starting git change analysis%s in workspace %s", f" for {path}" if path else "", workspace_root)
+    logger.info("Starting git change analysis%s in workspace %s%s", 
+                f" for {path}" if path else "", 
+                workspace_root,
+                f" with commits: {commits}" if commits else "")
 
     if not workspace_root:
         return {"status": "error", "message": "workspace_root parameter is required"}
 
+    # First, ensure we can access the repository (will clone if remote)
+    from .git_utils import ensure_repository
+    actual_repo_path = ensure_repository(workspace_root)
+    
+    # Check if repository access failed
+    if not actual_repo_path:
+        # Check if this looks like a local path that might not exist on MCP server
+        if workspace_root.startswith('/') or workspace_root.startswith('./') or workspace_root.startswith('../'):
+            return {
+                "status": "error",
+                "message": (
+                    f"Could not access or clone repository: {workspace_root}\n\n"
+                    "This appears to be a local filesystem path. If the MCP server is running "
+                    "remotely (separate from your local machine), you must provide a REMOTE "
+                    "repository URL instead.\n\n"
+                    "✅ CORRECT formats:\n"
+                    "  - 'username/repo' (for GitHub default branch)\n"
+                    "  - 'username/repo@branch-name' (for specific branch)\n"
+                    "  - 'git@github.com:username/repo.git@branch-name'\n\n"
+                    "❌ INCORRECT (local paths that don't exist on MCP server):\n"
+                    "  - '/home/runner/_work/repo/repo'\n"
+                    "  - '/github/workspace/project'\n"
+                    "  - './local-checkout'\n\n"
+                    "In CI/CD contexts (GitHub Actions, etc.), extract the repository URL "
+                    "from environment variables instead of using the local checkout path."
+                )
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Could not access or clone repository: {workspace_root}"
+            }
+
     # Get git diff
     logger.debug("Fetching git diff...")
-    diff_content, staged_content = get_git_diff(workspace_root, path)
+    diff_content, staged_content = get_git_diff(workspace_root, path, commits)
 
     # Get list of all changed files
     changed_files = get_changed_files(workspace_root)
@@ -322,8 +458,27 @@ def analyze_changes(workspace_root: str = "", path: str = "") -> dict[str, Any]:
     logger.debug("Combined diff size: %d bytes", len(combined_diff))
 
     if not combined_diff:
-        logger.warning("No changes detected in git diff")
-        return {"status": "no_changes", "message": "No changes detected in the git diff", "file_list": []}
+        if commits:
+            logger.warning("No changes detected in commit range: %s", commits)
+            return {
+                "status": "no_changes", 
+                "message": f"No changes detected in commit range: {commits}", 
+                "file_list": []
+            }
+        else:
+            logger.warning("No uncommitted changes detected")
+            return {
+                "status": "no_changes", 
+                "message": (
+                    "No uncommitted changes detected in the git diff.\n\n"
+                    "If you're analyzing a remote repository, use the 'commits' parameter to analyze "
+                    "committed changes instead. Examples:\n"
+                    "  - commits='HEAD~1..HEAD' (last commit)\n"
+                    "  - commits='HEAD~5..HEAD' (last 5 commits)\n"
+                    "  - commits='abc123^..abc123' (specific commit)"
+                ),
+                "file_list": []
+            }
 
     # Parse the diff
     logger.debug("Parsing git diff...")

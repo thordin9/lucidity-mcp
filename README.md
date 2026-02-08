@@ -28,6 +28,7 @@ Before you commit, just ask Lucidity to analyze the changes instead of vibe-codi
 - 🧩 **Extensible Framework** - Easy to add new issue types or refine analysis criteria
 - 🔀 **Flexible Transport** - Supports both stdio for terminal-based interaction and SSE for network-based communication
 - 🔄 **Git-Aware Analysis** - Analyzes changes directly from git diff, making it ideal for pre-commit reviews
+- 🌍 **Remote Repository Support** - Works with remote git repositories, automatically cloning and caching as needed
 
 ## 🚀 Installation
 
@@ -120,8 +121,328 @@ With an AI assistant connected to Lucidity, try these queries:
 
 - `analyze_changes` - Prepares git changes for analysis through MCP
   - Parameters:
-    - `workspace_root`: The root directory of the workspace/git repository
+    - `workspace_root`: The root directory of the workspace/git repository, or a remote git URL
+      - Supports local paths: `/path/to/local/repo`
+      - Supports SSH URLs: `git@github.com:username/repo.git`
+      - Supports HTTPS URLs: `https://github.com/username/repo.git`
+      - Supports short GitHub format: `username/repo` (automatically converted to SSH)
+      - Supports GitHub domain format: `github.com/username/repo` (automatically converted to SSH)
+      - **Branch specification**: Append `@branch` to any format (e.g., `username/repo@develop`)
     - `path`: Optional specific file path to analyze
+
+### Remote Repository Support
+
+Lucidity MCP now supports analyzing remote repositories without requiring a local clone! When you provide a remote repository URL as the `workspace_root`, Lucidity will:
+
+1. **Automatically clone** the repository to a cache location (default: `/tmp/lucidity-mcp-repos/`)
+2. **Cache the clone** for future use to avoid repeated cloning
+3. **Update automatically** by fetching latest changes if the repository already exists
+4. **Checkout specific branches** when specified using the `@branch` syntax
+5. **Work seamlessly** with the existing analysis workflow
+6. **Skip SSH host key verification** for convenience (see security note below)
+7. **Track access times** to enable cleanup of inactive repositories
+
+**Prerequisites for remote repositories:**
+- Git must be installed and accessible
+- For SSH URLs (default), a valid SSH key must be configured for authentication
+- For HTTPS URLs, appropriate credentials may be required
+
+**Cache Configuration:**
+The repository cache location can be customized using the `LUCIDITY_CACHE_DIR` environment variable:
+```bash
+export LUCIDITY_CACHE_DIR="/path/to/custom/cache"
+```
+
+If not set, repositories are cached in `/tmp/lucidity-mcp-repos/`.
+
+**Security Note:**
+SSH host key verification is automatically disabled when cloning or updating repositories via SSH. This allows seamless operation without requiring manual host key acceptance. While this is convenient for development and automated workflows, be aware that it bypasses a security measure that normally protects against man-in-the-middle attacks.
+
+**Example usage:**
+```python
+# Analyze a remote GitHub repository using short format (default branch)
+analyze_changes(workspace_root="username/repo")
+
+# Analyze a specific branch
+analyze_changes(workspace_root="username/repo@develop")
+
+# Or use full SSH URL with branch
+analyze_changes(workspace_root="git@github.com:username/repo.git@feature-branch")
+
+# Or HTTPS URL with branch
+analyze_changes(workspace_root="https://github.com/username/repo.git@main")
+
+# Local repositories still work as before
+analyze_changes(workspace_root="/path/to/local/repo")
+```
+
+### Repository Cache Cleanup
+
+To prevent disk space issues from accumulated cached repositories, Lucidity provides a cleanup command that removes repositories that haven't been accessed recently.
+
+**Manual Cleanup:**
+```bash
+# Clean up repositories inactive for 7+ days (default)
+lucidity-mcp --cleanup-cache
+
+# Specify custom inactivity threshold (e.g., 30 days)
+lucidity-mcp --cleanup-cache --cleanup-days 30
+
+# Dry run to see what would be removed without actually deleting
+lucidity-mcp --cleanup-cache --dry-run
+```
+
+**Automated Cleanup with Cron:**
+Add to your crontab to run cleanup automatically:
+```bash
+# Clean up every Sunday at 2 AM
+0 2 * * 0 /path/to/lucidity-mcp --cleanup-cache --cleanup-days 7
+
+# Or using custom cache directory
+0 2 * * 0 LUCIDITY_CACHE_DIR=/custom/path /path/to/lucidity-mcp --cleanup-cache
+```
+
+The cleanup process:
+- Scans the cache directory for cloned repositories
+- Checks the `.last_accessed` file in each repository
+- Removes repositories that haven't been accessed within the specified time period
+- Reports the number of repositories removed and disk space freed
+
+**Note:** Each time a repository is cloned or updated, its access time is automatically tracked, so actively used repositories will never be removed.
+
+### Instructions for AI Agents
+
+If you are an AI agent using this tool, **read this carefully** to avoid common mistakes:
+
+#### ⚠️ CRITICAL: Remote vs Local Repositories
+
+**When the MCP server is running remotely** (separate from the repository location), you **MUST** use remote repository URLs, not local filesystem paths.
+
+❌ **COMMON MISTAKE** - Using local paths that don't exist on MCP server:
+```python
+# These will FAIL if MCP server doesn't have access to this filesystem:
+analyze_changes(workspace_root="/home/runner/_work/repo/repo")
+analyze_changes(workspace_root="/github/workspace/myproject")
+analyze_changes(workspace_root="./local-checkout")
+```
+
+✅ **CORRECT** - Using remote repository URLs:
+```python
+# These will work because MCP server can clone from remote:
+analyze_changes(workspace_root="username/repo")
+analyze_changes(workspace_root="username/repo@feature-branch")
+analyze_changes(workspace_root="git@github.com:username/repo.git@branch-name")
+```
+
+#### Decision Tree: Which Format Should I Use?
+
+```
+Is the MCP server running on the same machine as the repository?
+│
+├─ NO (most common in CI/CD, GitHub Actions, remote servers)
+│  └─> Use REMOTE format: "username/repo@branch"
+│
+└─ YES (local development with local MCP server)
+   └─> Can use LOCAL format: "/path/to/repo"
+```
+
+#### Usage Guidelines
+
+1. **Analyzing Uncommitted Changes (Local Development)**
+   
+   Use when you have local changes in your working directory:
+   
+   ```python
+   # Analyze uncommitted changes in working directory
+   analyze_changes(workspace_root="/path/to/local/repo")
+   analyze_changes(workspace_root="username/repo")  # if already cloned remotely
+   ```
+
+2. **Analyzing Committed Changes (Remote Repositories / Historical Analysis)**
+   
+   **This is the recommended approach for remote repositories!**
+   
+   Use the `commits` parameter to analyze committed changes:
+   
+   ```python
+   # Analyze last commit
+   analyze_changes(workspace_root="username/repo", commits="HEAD~1..HEAD")
+   
+   # Analyze last 5 commits
+   analyze_changes(workspace_root="username/repo", commits="HEAD~5..HEAD")
+   
+   # Analyze a specific commit
+   analyze_changes(workspace_root="username/repo", commits="abc123^..abc123")
+   
+   # Analyze differences between branches
+   analyze_changes(workspace_root="username/repo", commits="main..feature-branch")
+   ```
+   
+   **Common commit range patterns:**
+   - `"HEAD~1..HEAD"` - Last commit only
+   - `"HEAD~5..HEAD"` - Last 5 commits
+   - `"abc123^..abc123"` - Specific commit by hash
+   - `"main..develop"` - All changes in develop not in main
+   - `"v1.0..v2.0"` - Changes between tags
+
+3. **Remote Repository (Default/Recommended)**
+   
+   Use this format in most cases, especially:
+   - GitHub Actions / CI/CD pipelines
+   - Remote MCP server deployments
+   - When analyzing repositories you don't have locally
+   
+   ```python
+   # Analyze default branch
+   analyze_changes(workspace_root="username/repo")
+   
+   # Analyze specific branch
+   analyze_changes(workspace_root="username/repo@develop")
+   analyze_changes(workspace_root="username/repo@feature/new-api")
+   
+   # Full URL formats also work
+   analyze_changes(workspace_root="git@github.com:username/repo.git@branch")
+   analyze_changes(workspace_root="https://github.com/username/repo.git@main")
+   ```
+
+4. **GitHub Actions / CI/CD Context**
+   
+   When running in CI/CD, the local checkout path is on the **CI runner**, not the MCP server.
+   
+   ❌ **DON'T** use the CI workspace path:
+   ```python
+   # These paths exist on CI runner, NOT on MCP server
+   analyze_changes(workspace_root="/home/runner/_work/repo/repo")
+   analyze_changes(workspace_root="/github/workspace")  # Even if set via CI environment
+   ```
+   
+   ✅ **DO** extract repository info from CI environment and use commits parameter:
+   ```python
+   # Use repository slug from CI environment variables
+   # GitHub Actions example: GITHUB_REPOSITORY = "username/repo"
+   
+   # Analyze the last commit in a PR or push
+   import os
+   repo = os.environ.get('GITHUB_REPOSITORY', 'username/repo')  # e.g., "username/repo"
+   branch = os.environ.get('GITHUB_REF_NAME', 'main')           # e.g., "feature-branch"
+   
+   # Analyze last commit
+   analyze_changes(workspace_root=f"{repo}@{branch}", commits="HEAD~1..HEAD")
+   
+   # Or analyze multiple recent commits
+   analyze_changes(workspace_root=f"{repo}@{branch}", commits="HEAD~5..HEAD")
+   ```
+
+5. **Local Development (Only if MCP Server Has Access)**
+   
+   Only use filesystem paths when:
+   - MCP server runs on your local machine
+   - The repository is on the same filesystem
+   - You're developing and testing locally
+   
+   ```python
+   analyze_changes(workspace_root="/home/user/projects/myrepo")
+   ```
+
+6. **Handling User Input**
+   
+   When a user provides a path:
+   
+   ```python
+   # If user gives you a path like "/path/to/repo"
+   # and you're in a remote context, ask for the repository URL:
+   
+   user_path = "/home/runner/_work/repo/repo"
+   
+   # ASK: "What is the GitHub repository URL for this project?"
+   # Then use: "username/repo@branch" format with commits parameter
+   
+   # If unsure whether it's local or remote:
+   if user_path.startswith('/') or user_path.startswith('./'):
+       # Probably a local path - ask for remote URL instead
+       # "I need the repository URL (e.g., username/repo) to analyze remotely"
+       # "Should I analyze uncommitted changes or recent commits?"
+   ```
+
+7. **Error Handling**
+   
+   If you see "No uncommitted changes detected":
+   
+   ```
+   ✓ For remote repositories, use the 'commits' parameter to analyze committed changes
+   ✓ Example: commits="HEAD~1..HEAD" for last commit
+   ```
+   
+   If you see "Could not access or clone repository":
+   
+   ```
+   ✓ Check if you used a local path instead of remote URL
+   ✓ Verify the repository URL is correct (username/repo format)
+   ✓ Confirm the branch name exists
+   ✓ Ensure SSH keys are configured for private repositories
+   ✓ Try HTTPS format if SSH fails
+   ```
+
+#### Quick Reference
+
+| Context | Format to Use | Commits Parameter | Example |
+|---------|---------------|-------------------|---------|
+| GitHub Actions (analyze PR) | `username/repo@branch` | `HEAD~1..HEAD` or `HEAD~N..HEAD` | `myorg/myapp@pr-branch` with `commits="HEAD~1..HEAD"` |
+| CI/CD Pipeline | `username/repo@branch` | `HEAD~1..HEAD` | `company/project@develop` with `commits="HEAD~1..HEAD"` |
+| Remote Analysis (last commit) | `username/repo@branch` | `HEAD~1..HEAD` | `user/repo@main` with `commits="HEAD~1..HEAD"` |
+| Remote Analysis (multiple commits) | `username/repo@branch` | `HEAD~5..HEAD` | `user/repo@feature` with `commits="HEAD~5..HEAD"` |
+| Local Uncommitted Changes | `/path/to/repo` | _(none)_ | `/home/dev/project` |
+
+#### Example Scenarios
+
+**Scenario 1: Analyzing a PR in GitHub Actions**
+```python
+# ❌ WRONG - uses local CI runner path
+analyze_changes(workspace_root="/home/runner/_work/myrepo/myrepo")
+
+# ✅ CORRECT - uses remote repository reference with commits
+analyze_changes(workspace_root="myorg/myrepo@pr-123-feature", commits="HEAD~1..HEAD")
+```
+
+**Scenario 2: User asks to analyze their remote repository**
+```
+User: "Can you analyze the code in my repository username/myproject?"
+
+✅ Agent: "Should I analyze uncommitted changes or recent commits?"
+User: "Analyze the last commit"
+Agent: analyze_changes(workspace_root="username/myproject", commits="HEAD~1..HEAD")
+```
+
+**Scenario 3: Analyzing a specific branch with multiple commits**
+```python
+# Analyze last 5 commits in a feature branch
+analyze_changes(
+    workspace_root="company/app@feature/user-auth",
+    commits="HEAD~5..HEAD"
+)
+
+# Or using full SSH URL
+analyze_changes(
+    workspace_root="git@github.com:company/app.git@feature/user-auth",
+    commits="HEAD~5..HEAD"
+)
+```
+
+**Scenario 4: Historical code review**
+```python
+# Analyze a specific commit by hash
+analyze_changes(
+    workspace_root="username/repo",
+    commits="abc123^..abc123"
+)
+
+# Analyze changes between two tags
+analyze_changes(
+    workspace_root="username/repo",
+    commits="v1.0..v2.0"
+)
+```
+
 
 ## 💻 Development
 
