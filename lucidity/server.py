@@ -269,7 +269,10 @@ def parse_args() -> argparse.Namespace:
     Returns:
         Parsed arguments
     """
-    parser = argparse.ArgumentParser(description="Lucidity MCP Server")
+    parser = argparse.ArgumentParser(
+        description="Lucidity MCP Server",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument(
         "--host",
@@ -286,7 +289,11 @@ def parse_args() -> argparse.Namespace:
         "--transport",
         choices=["stdio", "sse", "streamable-http", "both"],
         default="stdio",
-        help="Transport type to use (stdio for terminal, sse/streamable-http for network, both for SSE+streamable-http)",
+        help="""Transport type to use:
+                        - stdio: for terminal interaction
+                        - sse: for network (legacy, SSE-based)
+                        - streamable-http: for network (recommended, modern HTTP)
+                        - both: SSE + Streamable HTTP simultaneously""",
     )
     parser.add_argument(
         "--log-level",
