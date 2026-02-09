@@ -488,10 +488,38 @@ mypy .
 Lucidity handles logging differently depending on the transport:
 
 - **SSE transport**: Full console logging is enabled
+- **Streamable HTTP transport**: Full console logging is enabled
 - **Stdio transport with --log-file**: All logs go to the file, console is disabled
 - **Stdio transport without --log-file**: Only warnings and errors go to stderr, info logs are disabled
 
 This ensures that stdio communication isn't broken by logs appearing on stdout.
+
+## 🌐 Transport Options
+
+Lucidity supports three transport mechanisms:
+
+### Stdio Transport
+- **Use case**: Terminal-based interaction, local development
+- **Connection**: Direct process communication via stdin/stdout
+- **Best for**: Command-line tools, local testing
+
+### SSE Transport (Legacy)
+- **Use case**: Network-based communication (legacy support)
+- **Connection**: Server-Sent Events over HTTP
+- **Endpoints**: `/sse` for streaming, `/messages/` for posting
+- **Best for**: Legacy systems already using SSE
+
+### Streamable HTTP Transport (Recommended)
+- **Use case**: Modern network-based communication
+- **Connection**: Single HTTP endpoint with request/response and optional streaming
+- **Endpoint**: `/mcp` for all communication
+- **Advantages**:
+  - Simpler architecture with a single endpoint
+  - Better scalability and load balancing support
+  - Improved compatibility with proxies and CDNs
+  - Native HTTP semantics (easier debugging)
+  - Recommended by the MCP specification for new deployments
+- **Best for**: Production deployments, cloud environments, modern integrations
 
 ## 🎛️ Command-line Options
 
