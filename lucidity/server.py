@@ -154,7 +154,7 @@ def run_streamable_http_server(config: dict[str, Any]) -> None:
         config: Server configuration
     """
     logger.debug("🔌 Using Streamable HTTP transport for network communication")
-    
+
     # Use FastMCP's built-in run method with streamable-http transport
     # This provides a single /mcp endpoint for all MCP communication
     mcp.run(
