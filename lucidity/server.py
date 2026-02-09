@@ -164,6 +164,105 @@ def run_streamable_http_server(config: dict[str, Any]) -> None:
     )
 
 
+def run_combined_server(config: dict[str, Any]) -> None:
+    """Run the server with both SSE and Streamable HTTP transports.
+
+    Args:
+        config: Server configuration
+    """
+    logger.debug("🔌 Using combined SSE + Streamable HTTP transports for network communication")
+
+    # Define middleware to suppress 'NoneType object is not callable' errors during shutdown
+    class SuppressNoneTypeErrorMiddleware:
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+        async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+            try:
+                await self.app(scope, receive, send)
+            except TypeError as e:
+                if "NoneType" in str(e) and "not callable" in str(e):
+                    pass
+                else:
+                    raise
+
+    # Get the ASGI apps for both transports from FastMCP
+    try:
+        # Get SSE app from FastMCP
+        sse_app = mcp.sse_app()
+        # Get Streamable HTTP app from FastMCP
+        streamable_app = mcp.streamable_http_app()
+    except AttributeError as e:
+        logger.error("FastMCP version may not support sse_app() or streamable_http_app() methods")
+        logger.error("Falling back to manual SSE setup with streamable HTTP mounted")
+        # Fallback: use manual SSE setup and mount streamable HTTP
+        sse = SseServerTransport("/messages/")
+
+        async def handle_sse(request: Request) -> None:
+            async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+                try:
+                    await mcp._mcp_server.run(
+                        streams[0],
+                        streams[1],
+                        mcp._mcp_server.create_initialization_options(),
+                    )
+                except asyncio.CancelledError:
+                    logger.debug("🔍 ASGI connection cancelled, shutting down quietly.")
+                except Exception as e:
+                    logger.exception("💥 ASGI connection ended with exception: %s", e)
+                    handle_taskgroup_exception(e)
+
+        # Create app with both SSE and streamable HTTP endpoints
+        app = Starlette(
+            debug=config.get("debug", False),
+            middleware=[
+                Middleware(SuppressNoneTypeErrorMiddleware),
+                Middleware(
+                    CORSMiddleware,
+                    allow_origins=["*"],
+                    allow_methods=["GET", "POST"],
+                    allow_headers=["*"],
+                ),
+            ],
+            routes=[
+                Route("/sse", endpoint=handle_sse),
+                Mount("/messages/", app=sse.handle_post_message),
+                Mount("/mcp", app=mcp.streamable_http_app()),
+            ],
+        )
+    else:
+        # Create combined Starlette app with both transports mounted
+        app = Starlette(
+            debug=config.get("debug", False),
+            middleware=[
+                Middleware(SuppressNoneTypeErrorMiddleware),
+                Middleware(
+                    CORSMiddleware,
+                    allow_origins=["*"],
+                    allow_methods=["GET", "POST"],
+                    allow_headers=["*"],
+                ),
+            ],
+            routes=[
+                # Mount SSE at /sse (with /messages/ for posting)
+                Mount("/sse", app=sse_app),
+                # Mount Streamable HTTP at /mcp
+                Mount("/mcp", app=streamable_app),
+            ],
+        )
+
+    # Create and run Uvicorn server
+    uvicorn_config = uvicorn.Config(
+        app,
+        host=cast(str, config["host"]),
+        port=cast(int, config["port"]),
+        log_config=None,
+        timeout_graceful_shutdown=0,
+    )
+    server = uvicorn.Server(uvicorn_config)
+    server.run()
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments.
 
@@ -185,9 +284,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--transport",
-        choices=["stdio", "sse", "streamable-http"],
+        choices=["stdio", "sse", "streamable-http", "both"],
         default="stdio",
-        help="Transport type to use (stdio for terminal, sse/streamable-http for network)",
+        help="Transport type to use (stdio for terminal, sse/streamable-http for network, both for SSE+streamable-http)",
     )
     parser.add_argument(
         "--log-level",
@@ -324,6 +423,11 @@ def main() -> int:
         elif args.transport == "streamable-http":
             logger.info("🚀 Starting Streamable HTTP server on %s:%s", config["host"], config["port"])
             run_streamable_http_server(config)
+        elif args.transport == "both":
+            logger.info("🚀 Starting combined SSE + Streamable HTTP server on %s:%s", config["host"], config["port"])
+            logger.info("   SSE endpoint: http://%s:%s/sse", config["host"], config["port"])
+            logger.info("   Streamable HTTP endpoint: http://%s:%s/mcp", config["host"], config["port"])
+            run_combined_server(config)
         else:
             run_stdio_server()
 

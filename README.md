@@ -66,6 +66,9 @@ lucidity-mcp --transport sse --host 127.0.0.1 --port 6969
 # Start with Streamable HTTP transport (recommended for network use)
 lucidity-mcp --transport streamable-http --host 127.0.0.1 --port 6969
 
+# Start with BOTH transports simultaneously (SSE + Streamable HTTP)
+lucidity-mcp --transport both --host 127.0.0.1 --port 6969
+
 # Run with debug logging
 lucidity-mcp --debug
 
@@ -106,6 +109,23 @@ lucidity-mcp --log-file lucidity.log
    ```
 
 3. The AI can now invoke the `analyze_changes` tool to get code quality feedback!
+
+#### Both Transports Simultaneously
+
+1. Start Lucidity with both transports enabled:
+
+   ```bash
+   lucidity-mcp --transport both
+   ```
+
+2. Connect different AI assistants to either endpoint:
+
+   ```
+   SSE: sse://localhost:6969/sse
+   Streamable HTTP: http://localhost:6969/mcp
+   ```
+
+3. Multiple clients can connect using either transport simultaneously!
 
 ## 🧠 Analysis Dimensions
 
@@ -490,6 +510,7 @@ Lucidity handles logging differently depending on the transport:
 
 - **SSE transport**: Full console logging is enabled
 - **Streamable HTTP transport**: Full console logging is enabled
+- **Both transports**: Full console logging is enabled
 - **Stdio transport with --log-file**: All logs go to the file, console is disabled
 - **Stdio transport without --log-file**: Only warnings and errors go to stderr, info logs are disabled
 
@@ -497,7 +518,7 @@ This ensures that stdio communication isn't broken by logs appearing on stdout.
 
 ## 🌐 Transport Options
 
-Lucidity supports three transport mechanisms:
+Lucidity supports four transport configurations:
 
 ### Stdio Transport
 - **Use case**: Terminal-based interaction, local development
@@ -522,11 +543,24 @@ Lucidity supports three transport mechanisms:
   - Recommended by the MCP specification for new deployments
 - **Best for**: Production deployments, cloud environments, modern integrations
 
+### Both Transports (SSE + Streamable HTTP)
+- **Use case**: Supporting multiple client types simultaneously
+- **Connection**: Both SSE and Streamable HTTP on the same server
+- **Endpoints**: 
+  - `/sse` + `/messages/` for SSE clients
+  - `/mcp` for Streamable HTTP clients
+- **Advantages**:
+  - Backward compatibility with existing SSE clients
+  - Modern Streamable HTTP support for new clients
+  - Single server instance handles all client types
+  - Seamless migration path from SSE to Streamable HTTP
+- **Best for**: Transition periods, supporting diverse client ecosystems, maximum flexibility
+
 ## 🎛️ Command-line Options
 
 ```
 usage: lucidity-mcp [-h] [--debug] [--host HOST] [--port PORT]
-                    [--transport {stdio,sse,streamable-http}]
+                    [--transport {stdio,sse,streamable-http,both}]
                     [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--verbose]
                     [--log-file LOG_FILE]
 
@@ -535,11 +569,12 @@ options:
   --debug               Enable debug logging
   --host HOST           Host to bind the server to (use 0.0.0.0 for all interfaces)
   --port PORT           Port to listen on for network connections
-  --transport {stdio,sse,streamable-http}
+  --transport {stdio,sse,streamable-http,both}
                         Transport type to use:
                         - stdio: for terminal interaction
                         - sse: for network (legacy, SSE-based)
                         - streamable-http: for network (recommended, modern HTTP)
+                        - both: SSE + Streamable HTTP simultaneously
   --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
                         Set the logging level
   --verbose             Enable verbose logging for HTTP requests
