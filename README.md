@@ -26,7 +26,7 @@ Before you commit, just ask Lucidity to analyze the changes instead of vibe-codi
 - 🤖 **MCP Integration** - Seamless integration with Claude and other MCP-compatible AI assistants
 - 🪶 **Lightweight Implementation** - Simple server design with minimal dependencies
 - 🧩 **Extensible Framework** - Easy to add new issue types or refine analysis criteria
-- 🔄 **Flexible Transport** - Supports stdio for terminal-based interaction, SSE (legacy) for network-based communication, and Streamable HTTP (recommended) for modern network deployments
+- 🔀 **Flexible Transport** - Supports stdio for terminal-based interaction, SSE (legacy) for network-based communication, and Streamable HTTP (recommended) for modern network deployments
 - 🔄 **Git-Aware Analysis** - Analyzes changes directly from git diff, making it ideal for pre-commit reviews
 - 🌍 **Remote Repository Support** - Works with remote git repositories, automatically cloning and caching as needed
 
@@ -524,10 +524,10 @@ Lucidity supports three transport mechanisms:
 ## 🎛️ Command-line Options
 
 ```
-usage: lucidity-mcp [-h] [--debug] [--host HOST] [--port PORT] 
-                [--transport {stdio,sse,streamable-http}]
-                [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--verbose]
-                [--log-file LOG_FILE]
+usage: lucidity-mcp [-h] [--debug] [--host HOST] [--port PORT]
+                    [--transport {stdio,sse,streamable-http}]
+                    [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--verbose]
+                    [--log-file LOG_FILE]
 
 options:
   -h, --help            show this help message and exit
