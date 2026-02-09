@@ -147,6 +147,23 @@ def run_stdio_server() -> None:
     anyio.run(arun)
 
 
+def run_streamable_http_server(config: dict[str, Any]) -> None:
+    """Run the server with Streamable HTTP transport.
+
+    Args:
+        config: Server configuration
+    """
+    logger.debug("🔌 Using Streamable HTTP transport for network communication")
+    
+    # Use FastMCP's built-in run method with streamable-http transport
+    # This provides a single /mcp endpoint for all MCP communication
+    mcp.run(
+        transport="streamable-http",
+        host=cast(str, config["host"]),
+        port=cast(int, config["port"]),
+    )
+
+
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments.
 
@@ -168,9 +185,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--transport",
-        choices=["stdio", "sse"],
+        choices=["stdio", "sse", "streamable-http"],
         default="stdio",
-        help="Transport type to use (stdio for terminal, sse for network)",
+        help="Transport type to use (stdio for terminal, sse/streamable-http for network)",
     )
     parser.add_argument(
         "--log-level",
@@ -304,6 +321,9 @@ def main() -> int:
         if args.transport == "sse":
             logger.info("🚀 Starting SSE server on %s:%s", config["host"], config["port"])
             run_sse_server(config)
+        elif args.transport == "streamable-http":
+            logger.info("🚀 Starting Streamable HTTP server on %s:%s", config["host"], config["port"])
+            run_streamable_http_server(config)
         else:
             run_stdio_server()
 

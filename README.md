@@ -26,7 +26,7 @@ Before you commit, just ask Lucidity to analyze the changes instead of vibe-codi
 - 🤖 **MCP Integration** - Seamless integration with Claude and other MCP-compatible AI assistants
 - 🪶 **Lightweight Implementation** - Simple server design with minimal dependencies
 - 🧩 **Extensible Framework** - Easy to add new issue types or refine analysis criteria
-- 🔀 **Flexible Transport** - Supports both stdio for terminal-based interaction and SSE for network-based communication
+- 🔄 **Flexible Transport** - Supports stdio for terminal-based interaction, SSE (legacy) for network-based communication, and Streamable HTTP (recommended) for modern network deployments
 - 🔄 **Git-Aware Analysis** - Analyzes changes directly from git diff, making it ideal for pre-commit reviews
 - 🌍 **Remote Repository Support** - Works with remote git repositories, automatically cloning and caching as needed
 
@@ -62,6 +62,9 @@ lucidity-mcp
 # Start with SSE transport (for network use)
 lucidity-mcp --transport sse --host 127.0.0.1 --port 6969
 
+# Start with Streamable HTTP transport (recommended for network use)
+lucidity-mcp --transport streamable-http --host 127.0.0.1 --port 6969
+
 # Run with debug logging
 lucidity-mcp --debug
 
@@ -70,6 +73,8 @@ lucidity-mcp --log-file lucidity.log
 ```
 
 ### Using with AI Assistants
+
+#### SSE Transport
 
 1. Start Lucidity in SSE mode:
 
@@ -81,6 +86,22 @@ lucidity-mcp --log-file lucidity.log
 
    ```
    sse://localhost:6969/sse
+   ```
+
+3. The AI can now invoke the `analyze_changes` tool to get code quality feedback!
+
+#### Streamable HTTP Transport (Recommended)
+
+1. Start Lucidity in Streamable HTTP mode:
+
+   ```bash
+   lucidity-mcp --transport streamable-http
+   ```
+
+2. Connect your AI assistant to the MCP endpoint:
+
+   ```
+   http://localhost:6969/mcp
    ```
 
 3. The AI can now invoke the `analyze_changes` tool to get code quality feedback!
@@ -475,7 +496,8 @@ This ensures that stdio communication isn't broken by logs appearing on stdout.
 ## 🎛️ Command-line Options
 
 ```
-usage: lucidity-mcp [-h] [--debug] [--host HOST] [--port PORT] [--transport {stdio,sse}]
+usage: lucidity-mcp [-h] [--debug] [--host HOST] [--port PORT] 
+                [--transport {stdio,sse,streamable-http}]
                 [--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}] [--verbose]
                 [--log-file LOG_FILE]
 
@@ -484,8 +506,11 @@ options:
   --debug               Enable debug logging
   --host HOST           Host to bind the server to (use 0.0.0.0 for all interfaces)
   --port PORT           Port to listen on for network connections
-  --transport {stdio,sse}
-                        Transport type to use (stdio for terminal, sse for network)
+  --transport {stdio,sse,streamable-http}
+                        Transport type to use:
+                        - stdio: for terminal interaction
+                        - sse: for network (legacy, SSE-based)
+                        - streamable-http: for network (recommended, modern HTTP)
   --log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}
                         Set the logging level
   --verbose             Enable verbose logging for HTTP requests
