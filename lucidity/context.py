@@ -14,9 +14,8 @@ logger = logging.getLogger("lucidity")
 
 # Create the MCP server with lifespan
 mcp = FastMCP(
-    "Lucidity-MCP",
-    description="AI Powered Code Review Tool for MCP",
-    version="0.1.0",
+    name="Lucidity-MCP",
+    instructions="AI Powered Code Review Tool for MCP",
     dependencies=["rich", "python-dotenv"],
 )
 
