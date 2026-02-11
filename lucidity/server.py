@@ -211,7 +211,7 @@ def run_combined_server(config: dict[str, Any]) -> None:
 
     # Create a lifespan context manager to run the session manager for streamable HTTP
     @contextlib.asynccontextmanager
-    async def lifespan(app: Starlette):  # noqa: ARG001
+    async def lifespan(_app: Starlette):
         """Manage the lifecycle of the session manager for streamable HTTP."""
         async with mcp._mcp_server.session_manager.run():
             yield
