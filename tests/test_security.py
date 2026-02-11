@@ -133,6 +133,20 @@ class TestPathValidation:
         assert not is_valid_path("")
         assert not is_valid_path(None)  # type: ignore
 
+    def test_absolute_paths_rejected(self):
+        """Test that absolute paths are rejected."""
+        # Unix absolute paths
+        assert not is_valid_path("/etc/passwd")
+        assert not is_valid_path("/usr/bin/python")
+        assert not is_valid_path("/root/.ssh/id_rsa")
+        # Home directory paths
+        assert not is_valid_path("~/secrets.txt")
+        assert not is_valid_path("~user/file.txt")
+        # Windows drive paths
+        assert not is_valid_path("C:\\Windows\\system32")
+        assert not is_valid_path("D:\\data\\file.txt")
+        assert not is_valid_path("C:/Windows/system32")
+
 
 class TestGitCommandSanitization:
     """Tests for git command argument sanitization."""

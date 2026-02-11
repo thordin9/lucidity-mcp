@@ -500,8 +500,19 @@ def cleanup_inactive_repositories(days: int = 7, dry_run: bool = False) -> dict[
                                     repo_size += os.path.getsize(filepath)
                                 except OSError:
                                     pass  # Skip files we can't access
-                except (subprocess.TimeoutExpired, ValueError, OSError) as e:
-                    logger.warning("Error calculating size for %s: %s", repo_path, e)
+                except (subprocess.TimeoutExpired, ValueError, OSError, FileNotFoundError) as e:
+                    logger.warning("Error running du command for %s: %s, falling back to os.walk", repo_path, e)
+                    # Fallback to os.walk if du is not available or fails
+                    try:
+                        for dirpath, dirnames, filenames in os.walk(repo_path):
+                            for filename in filenames:
+                                filepath = os.path.join(dirpath, filename)
+                                try:
+                                    repo_size += os.path.getsize(filepath)
+                                except OSError:
+                                    pass  # Skip files we can't access
+                    except OSError as walk_error:
+                        logger.warning("Error calculating size with os.walk for %s: %s", repo_path, walk_error)
                 
                 days_inactive = (current_time - last_access) / (24 * 60 * 60)
                 logger.info(

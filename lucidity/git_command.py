@@ -7,7 +7,6 @@ standard error handling, timeouts, and security considerations.
 
 import os
 import subprocess
-from typing import Any
 
 from .config import get_config
 from .log import logger

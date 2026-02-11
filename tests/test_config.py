@@ -86,14 +86,19 @@ def test_ssh_verify_variations():
 
 def test_get_config_singleton():
     """Test that get_config returns a singleton instance."""
-    # Clear any existing config
+    # Clear any existing config but restore it afterwards to avoid cross-test contamination.
     import lucidity.config
+
+    original_config = lucidity.config._config
     lucidity.config._config = None
 
-    with patch.dict(os.environ, {"LUCIDITY_MCP_PORT": "9999"}, clear=True):
-        config1 = get_config()
-        config2 = get_config()
+    try:
+        with patch.dict(os.environ, {"LUCIDITY_MCP_PORT": "9999"}, clear=True):
+            config1 = get_config()
+            config2 = get_config()
 
-        # Should be the same instance
-        assert config1 is config2
-        assert config1.mcp_port == 9999
+            # Should be the same instance
+            assert config1 is config2
+            assert config1.mcp_port == 9999
+    finally:
+        lucidity.config._config = original_config

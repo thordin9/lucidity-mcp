@@ -494,8 +494,8 @@ def analyze_changes(workspace_root: str = "", path: str = "", commits: str | Non
             original_code, modified_code = extract_code_from_diff(diff_info)
 
             # Skip if no significant code changes
-            if len(modified_code.strip()) < 10:
-                logger.debug("Skipping %s - insufficient code changes (< 10 chars)", filename)
+            if len(modified_code.strip()) < MIN_CODE_CHANGE_BYTES:
+                logger.debug("Skipping %s - insufficient code changes (< %d chars)", filename, MIN_CODE_CHANGE_BYTES)
                 continue
 
             # Detect language

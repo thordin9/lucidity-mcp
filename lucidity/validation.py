@@ -8,7 +8,6 @@ This module provides validation functions to prevent:
 """
 
 import re
-from typing import Any
 
 
 # Regex patterns for validation
@@ -84,6 +83,9 @@ def is_valid_commit_range(commits: str) -> bool:
 def is_valid_path(path: str) -> bool:
     """Validate file path to prevent directory traversal and injection.
 
+    Only accepts relative paths within the repository. Rejects absolute paths,
+    home directory paths, and Windows drive paths.
+
     Args:
         path: File path to validate
 
@@ -97,8 +99,16 @@ def is_valid_path(path: str) -> bool:
         False
         >>> is_valid_path("--help")
         False
+        >>> is_valid_path("/etc/passwd")
+        False
+        >>> is_valid_path("C:\\Windows\\system32")
+        False
     """
     if not path or not isinstance(path, str):
+        return False
+
+    # Reject absolute paths (Unix and Windows)
+    if path.startswith(("/", "~")) or (len(path) >= 2 and path[1] == ":"):
         return False
 
     # Check for directory traversal

@@ -158,7 +158,7 @@ export LUCIDITY_SSH_VERIFY="true"
 export LUCIDITY_MCP_PORT="8080"
 ```
 
-**See the [Security Considerations](#️-security-considerations) section below for important information about secure configuration.**
+**See the [Security Considerations](#security-considerations) section below for important information about secure configuration.**
 
 ## 🧠 Analysis Dimensions
 
@@ -272,9 +272,9 @@ analyze_changes(workspace_root="https://github.com/username/private-repo.git")
 
 **Security Risk:**
 Allowing all origins exposes the server to:
-- Cross-site scripting attacks
-- Unauthorized access from malicious websites
-- Data leakage through browser-based attacks
+- Unauthorized cross-origin access to APIs via the browser
+- Cross-origin data exfiltration when the browser has valid cookies or tokens
+- Increased impact of existing client-side compromises (e.g., XSS or malicious extensions)
 
 **Configure Restricted Origins (Recommended for Production):**
 Set allowed origins via the `LUCIDITY_CORS_ORIGINS` environment variable:

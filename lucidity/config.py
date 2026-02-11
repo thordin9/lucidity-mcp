@@ -6,11 +6,13 @@ with sensible defaults for development and production deployment.
 """
 
 import os
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
 
 # Constants for default values
-DEFAULT_CACHE_DIR = "/tmp/lucidity-mcp-repos"
+DEFAULT_CACHE_DIR = str(Path(tempfile.gettempdir()) / "lucidity-mcp-repos")
 DEFAULT_CLONE_TIMEOUT_SECONDS = 300
 DEFAULT_FETCH_TIMEOUT_SECONDS = 60
 DEFAULT_CLEANUP_DAYS = 7
@@ -42,6 +44,9 @@ class Config:
 
         Returns:
             Config instance populated from environment variables with fallback to defaults
+
+        Raises:
+            ValueError: If environment variables contain invalid values
         """
         # Parse CORS origins - can be comma-separated list or "*"
         cors_origins_str = os.environ.get("LUCIDITY_CORS_ORIGINS", DEFAULT_CORS_ORIGINS)
@@ -50,12 +55,39 @@ class Config:
         else:
             cors_origins = [origin.strip() for origin in cors_origins_str.split(",") if origin.strip()]
 
+        # Parse integer values with error handling
+        try:
+            clone_timeout = int(os.environ.get("LUCIDITY_CLONE_TIMEOUT", str(DEFAULT_CLONE_TIMEOUT_SECONDS)))
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid value for LUCIDITY_CLONE_TIMEOUT: {os.environ.get('LUCIDITY_CLONE_TIMEOUT')}"
+            ) from e
+
+        try:
+            fetch_timeout = int(os.environ.get("LUCIDITY_FETCH_TIMEOUT", str(DEFAULT_FETCH_TIMEOUT_SECONDS)))
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid value for LUCIDITY_FETCH_TIMEOUT: {os.environ.get('LUCIDITY_FETCH_TIMEOUT')}"
+            ) from e
+
+        try:
+            cleanup_days = int(os.environ.get("LUCIDITY_CLEANUP_DAYS", str(DEFAULT_CLEANUP_DAYS)))
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid value for LUCIDITY_CLEANUP_DAYS: {os.environ.get('LUCIDITY_CLEANUP_DAYS')}"
+            ) from e
+
+        try:
+            mcp_port = int(os.environ.get("LUCIDITY_MCP_PORT", str(DEFAULT_MCP_PORT)))
+        except ValueError as e:
+            raise ValueError(f"Invalid value for LUCIDITY_MCP_PORT: {os.environ.get('LUCIDITY_MCP_PORT')}") from e
+
         return cls(
             cache_dir=os.environ.get("LUCIDITY_CACHE_DIR", DEFAULT_CACHE_DIR),
-            clone_timeout=int(os.environ.get("LUCIDITY_CLONE_TIMEOUT", str(DEFAULT_CLONE_TIMEOUT_SECONDS))),
-            fetch_timeout=int(os.environ.get("LUCIDITY_FETCH_TIMEOUT", str(DEFAULT_FETCH_TIMEOUT_SECONDS))),
-            cleanup_days=int(os.environ.get("LUCIDITY_CLEANUP_DAYS", str(DEFAULT_CLEANUP_DAYS))),
-            mcp_port=int(os.environ.get("LUCIDITY_MCP_PORT", str(DEFAULT_MCP_PORT))),
+            clone_timeout=clone_timeout,
+            fetch_timeout=fetch_timeout,
+            cleanup_days=cleanup_days,
+            mcp_port=mcp_port,
             cors_origins=cors_origins,
             ssh_verify=os.environ.get("LUCIDITY_SSH_VERIFY", "false").lower() in ("true", "1", "yes"),
         )
