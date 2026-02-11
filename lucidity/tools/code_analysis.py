@@ -5,7 +5,6 @@ This module provides tools for analyzing code quality using MCP.
 """
 
 import os
-import subprocess
 from typing import Any
 
 from ..config import MIN_CODE_CHANGE_BYTES
