@@ -15,7 +15,6 @@ import anyio
 from dotenv import load_dotenv
 from mcp.server.sse import SseServerTransport
 from mcp.server.stdio import stdio_server
-from mcp.server.streamable_http import StreamableHTTPServerTransport
 from rich.logging import RichHandler
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -191,12 +190,8 @@ def run_combined_server(config: dict[str, Any]) -> None:
     app_config = get_config()
     logger.debug("🔌 Using combined SSE + Streamable HTTP transports for network communication")
 
-    # Set up both transports manually
-    # SSE transport for legacy clients
+    # Set up SSE transport manually
     sse = SseServerTransport("/messages/")
-    
-    # Streamable HTTP transport for modern clients
-    streamable_http = StreamableHTTPServerTransport("/mcp")
 
     async def handle_sse(request: Request) -> None:
         """Handle SSE connections at /sse endpoint."""
@@ -213,22 +208,10 @@ def run_combined_server(config: dict[str, Any]) -> None:
                 logger.exception("💥 SSE connection ended with exception: %s", e)
                 handle_taskgroup_exception(e)
 
-    async def handle_streamable_http(request: Request) -> None:
-        """Handle Streamable HTTP connections at /mcp endpoint."""
-        async with streamable_http.connect_http(request.scope, request.receive, request._send) as streams:
-            try:
-                await mcp._mcp_server.run(
-                    streams[0],
-                    streams[1],
-                    mcp._mcp_server.create_initialization_options(),
-                )
-            except asyncio.CancelledError:
-                logger.debug("🔍 Streamable HTTP connection cancelled, shutting down quietly.")
-            except Exception as e:
-                logger.exception("💥 Streamable HTTP connection ended with exception: %s", e)
-                handle_taskgroup_exception(e)
-
     # Create Starlette app with both SSE and Streamable HTTP endpoints
+    # Get streamable HTTP app from the underlying MCPServer
+    streamable_http = mcp._mcp_server.streamable_http_app()
+
     app = Starlette(
         debug=config.get("debug", False),
         middleware=[
@@ -245,7 +228,7 @@ def run_combined_server(config: dict[str, Any]) -> None:
             Route("/sse", endpoint=handle_sse),
             Mount("/messages/", app=sse.handle_post_message),
             # Streamable HTTP endpoint
-            Route("/mcp", endpoint=handle_streamable_http, methods=["GET", "POST", "DELETE"]),
+            Mount("/mcp", app=streamable_http),
         ],
     )
 
