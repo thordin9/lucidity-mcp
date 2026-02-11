@@ -5,11 +5,13 @@ This module provides tools for analyzing code quality using MCP.
 """
 
 import os
-import subprocess
 from typing import Any
 
+from ..config import MIN_CODE_CHANGE_BYTES
 from ..context import mcp
+from ..git_command import GitCommandError, run_git_command
 from ..log import logger
+from ..validation import is_valid_commit_range, is_valid_path
 from .git_utils import ensure_repository
 
 
@@ -31,6 +33,15 @@ def get_git_diff(workspace_root: str, path: str | None = None, commits: str | No
         Tuple of (diff_content, staged_files_content).
         When commits parameter is used, staged_files_content will be empty.
     """
+    # Validate inputs
+    if commits and not is_valid_commit_range(commits):
+        logger.error("Invalid commit range format: %s", commits)
+        return "", ""
+    
+    if path and not is_valid_path(path):
+        logger.error("Invalid path format: %s", path)
+        return "", ""
+
     logger.debug("Getting git diff%s in workspace %s%s", 
                 f" for path: {path}" if path else "", 
                 workspace_root,
@@ -45,65 +56,45 @@ def get_git_diff(workspace_root: str, path: str | None = None, commits: str | No
 
         workspace_root = actual_repo_path
 
-        # Store current directory
-        current_dir = os.getcwd()
-        logger.debug("Current directory before: %s", current_dir)
+        # Build diff command based on whether we're analyzing commits or working directory
+        if commits:
+            # Analyze committed changes
+            diff_args = ["diff", commits]
+            if path:
+                normalized_path = path.replace("\\", "/")
+                diff_args.append(normalized_path)
+            
+            logger.debug("Running diff command for commits: %s", diff_args)
+            result = run_git_command(diff_args, cwd=workspace_root)
+            logger.debug("Git diff size: %d bytes", len(result.stdout))
+            
+            # No staged content when analyzing commits
+            return result.stdout, ""
+        else:
+            # Analyze uncommitted changes (original behavior)
+            diff_args = ["diff"]
+            if path:
+                # Normalize path for Windows/WSL
+                normalized_path = path.replace("\\", "/")
+                diff_args.append(normalized_path)
 
-        # Change to workspace root
-        os.chdir(workspace_root)
-        logger.debug("Changed to workspace root: %s", os.getcwd())
+            logger.debug("Running diff command: %s", diff_args)
+            result = run_git_command(diff_args, cwd=workspace_root)
+            logger.debug("Git diff size: %d bytes", len(result.stdout))
 
-        try:
-            # Get the git repository root to verify we're in the right place
-            git_root = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
-            ).stdout.strip()
-            logger.debug("Git root directory: %s", git_root)
+            # Get the staged files content
+            staged_args = ["diff", "--cached"]
+            if path:
+                staged_args.append(normalized_path)
 
-            # Build diff command based on whether we're analyzing commits or working directory
-            if commits:
-                # Analyze committed changes
-                diff_command = ["git", "diff", commits]
-                if path:
-                    normalized_path = path.replace("\\", "/")
-                    diff_command.append(normalized_path)
-                
-                logger.debug("Running diff command for commits: %s", diff_command)
-                diff = subprocess.run(diff_command, capture_output=True, text=True, check=True).stdout
-                logger.debug("Git diff size: %d bytes", len(diff))
-                
-                # No staged content when analyzing commits
-                return diff, ""
-            else:
-                # Analyze uncommitted changes (original behavior)
-                diff_command = ["git", "diff"]
-                if path:
-                    # Normalize path for Windows/WSL
-                    normalized_path = path.replace("\\", "/")
-                    diff_command.append(normalized_path)
+            logger.debug("Running staged command: %s", staged_args)
+            staged_result = run_git_command(staged_args, cwd=workspace_root)
+            logger.debug("Git staged diff size: %d bytes", len(staged_result.stdout))
 
-                logger.debug("Running diff command: %s", diff_command)
-                diff = subprocess.run(diff_command, capture_output=True, text=True, check=True).stdout
-                logger.debug("Git diff size: %d bytes", len(diff))
+            return result.stdout, staged_result.stdout
 
-                # Get the staged files content
-                staged_command = ["git", "diff", "--cached"]
-                if path:
-                    staged_command.append(normalized_path)
-
-                logger.debug("Running staged command: %s", staged_command)
-                staged = subprocess.run(staged_command, capture_output=True, text=True, check=True).stdout
-                logger.debug("Git staged diff size: %d bytes", len(staged))
-
-                return diff, staged
-
-        finally:
-            # Change back to the original directory
-            logger.debug("Changing back to original directory: %s", current_dir)
-            os.chdir(current_dir)
-
-    except subprocess.CalledProcessError as e:
-        logger.error("Error getting git diff: %s (output: %s)", e, e.output)
+    except GitCommandError as e:
+        logger.error("Error getting git diff: %s", e.stderr)
         return "", ""
     except Exception as e:
         logger.error("Unexpected error getting git diff: %s", e)
@@ -130,39 +121,28 @@ def get_changed_files(workspace_root: str) -> list[str]:
 
         workspace_root = actual_repo_path
 
-        # Store current directory
-        current_dir = os.getcwd()
+        # Get unstaged modified files using cwd parameter instead of os.chdir
+        unstaged_result = run_git_command(
+            ["diff", "--name-only"],
+            cwd=workspace_root,
+        )
+        unstaged_files = unstaged_result.stdout.strip().split("\n")
 
-        # Change to workspace root
-        os.chdir(workspace_root)
+        # Get staged modified files
+        staged_result = run_git_command(
+            ["diff", "--cached", "--name-only"],
+            cwd=workspace_root,
+        )
+        staged_files = staged_result.stdout.strip().split("\n")
 
-        try:
-            # Get unstaged modified files
-            unstaged_files = (
-                subprocess.run(["git", "diff", "--name-only"], capture_output=True, text=True, check=True)
-                .stdout.strip()
-                .split("\n")
-            )
+        # Combine and remove empty entries
+        all_files = list(set(filter(None, unstaged_files + staged_files)))
+        logger.debug("Found %d changed files", len(all_files))
 
-            # Get staged modified files
-            staged_files = (
-                subprocess.run(["git", "diff", "--cached", "--name-only"], capture_output=True, text=True, check=True)
-                .stdout.strip()
-                .split("\n")
-            )
+        return all_files
 
-            # Combine and remove empty entries
-            all_files = list(set(filter(None, unstaged_files + staged_files)))
-            logger.debug("Found %d changed files", len(all_files))
-
-            return all_files
-
-        finally:
-            # Change back to the original directory
-            os.chdir(current_dir)
-
-    except subprocess.CalledProcessError as e:
-        logger.error("Error getting changed files: %s (output: %s)", e, e.output)
+    except GitCommandError as e:
+        logger.error("Error getting changed files: %s", e.stderr)
         return []
     except Exception as e:
         logger.error("Unexpected error getting changed files: %s", e)
@@ -513,8 +493,8 @@ def analyze_changes(workspace_root: str = "", path: str = "", commits: str | Non
             original_code, modified_code = extract_code_from_diff(diff_info)
 
             # Skip if no significant code changes
-            if len(modified_code.strip()) < 10:
-                logger.debug("Skipping %s - insufficient code changes (< 10 chars)", filename)
+            if len(modified_code.strip()) < MIN_CODE_CHANGE_BYTES:
+                logger.debug("Skipping %s - insufficient code changes (< %d chars)", filename, MIN_CODE_CHANGE_BYTES)
                 continue
 
             # Detect language

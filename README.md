@@ -127,6 +127,39 @@ lucidity-mcp --log-file lucidity.log
 
 3. Multiple clients can connect using either transport simultaneously!
 
+## ⚙️ Configuration
+
+Lucidity can be configured using environment variables for deployment flexibility:
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LUCIDITY_CACHE_DIR` | `/tmp/lucidity-mcp-repos` | Directory for caching cloned repositories |
+| `LUCIDITY_CLONE_TIMEOUT` | `300` | Timeout in seconds for git clone operations |
+| `LUCIDITY_FETCH_TIMEOUT` | `60` | Timeout in seconds for git fetch operations |
+| `LUCIDITY_CLEANUP_DAYS` | `7` | Days of inactivity before cleaning cached repos |
+| `LUCIDITY_MCP_PORT` | `6969` | Default port for network transports |
+| `LUCIDITY_CORS_ORIGINS` | `*` | Allowed CORS origins (comma-separated) |
+| `LUCIDITY_SSH_VERIFY` | `false` | Enable SSH host key verification |
+
+### Example Configuration
+
+```bash
+# Development environment
+export LUCIDITY_CACHE_DIR="/tmp/lucidity-cache"
+export LUCIDITY_CORS_ORIGINS="*"
+export LUCIDITY_SSH_VERIFY="false"
+
+# Production environment
+export LUCIDITY_CACHE_DIR="/var/cache/lucidity"
+export LUCIDITY_CORS_ORIGINS="https://app.example.com,https://admin.example.com"
+export LUCIDITY_SSH_VERIFY="true"
+export LUCIDITY_MCP_PORT="8080"
+```
+
+**See the [Security Considerations](#security-considerations) section below for important information about secure configuration.**
+
 ## 🧠 Analysis Dimensions
 
 Lucidity analyzes code across 10 critical quality dimensions:
@@ -197,8 +230,98 @@ export LUCIDITY_CACHE_DIR="/path/to/custom/cache"
 
 If not set, repositories are cached in `/tmp/lucidity-mcp-repos/`.
 
-**Security Note:**
-SSH host key verification is automatically disabled when cloning or updating repositories via SSH. This allows seamless operation without requiring manual host key acceptance. While this is convenient for development and automated workflows, be aware that it bypasses a security measure that normally protects against man-in-the-middle attacks.
+## ⚠️ Security Considerations
+
+Lucidity includes several security-related configuration options that should be carefully considered based on your deployment environment.
+
+### SSH Host Key Verification
+
+**WARNING:** By default, SSH host key verification is disabled when cloning repositories.
+
+**Security Risk:**
+- Disabling host key verification removes protection against man-in-the-middle (MITM) attacks
+- An attacker could intercept git clone/fetch operations and serve malicious code
+- This is particularly risky when working with untrusted networks or repositories
+
+**Default Behavior:**
+For convenience in development and automated workflows, Lucidity automatically disables SSH host key verification. This allows seamless operation without requiring manual host key acceptance.
+
+**Enable Verification (Recommended for Production):**
+To enable SSH host key verification, set the `LUCIDITY_SSH_VERIFY` environment variable:
+
+```bash
+export LUCIDITY_SSH_VERIFY=true
+```
+
+When enabled, you must ensure that:
+- SSH known_hosts file is properly configured
+- Host keys for target repositories are pre-accepted
+- Your deployment environment can handle SSH key verification prompts
+
+**Alternative: Use HTTPS with Credentials**
+For sensitive repositories or production environments, consider using HTTPS URLs with proper credential management instead of SSH:
+
+```python
+# Safer alternative to SSH for sensitive code
+analyze_changes(workspace_root="https://github.com/username/private-repo.git")
+```
+
+### CORS Configuration
+
+**Default:** CORS allows all origins (`*`)
+
+**Security Risk:**
+Allowing all origins exposes the server to:
+- Unauthorized cross-origin access to APIs via the browser
+- Cross-origin data exfiltration when the browser has valid cookies or tokens
+- Increased impact of existing client-side compromises (e.g., XSS or malicious extensions)
+
+**Configure Restricted Origins (Recommended for Production):**
+Set allowed origins via the `LUCIDITY_CORS_ORIGINS` environment variable:
+
+```bash
+# Single origin
+export LUCIDITY_CORS_ORIGINS="https://yourdomain.com"
+
+# Multiple origins (comma-separated)
+export LUCIDITY_CORS_ORIGINS="https://app.yourdomain.com,https://admin.yourdomain.com"
+```
+
+**Development vs Production:**
+- **Development:** Wildcard (`*`) is acceptable for local testing
+- **Production:** Always specify explicit allowed origins
+
+### Input Validation
+
+Lucidity validates all user inputs to prevent:
+- Command injection attacks through git commands
+- Directory traversal attacks via branch names and paths
+- Shell metacharacter injection
+
+These protections are always active and cannot be disabled.
+
+### Best Practices
+
+1. **Network Security:**
+   - Run Lucidity behind a firewall or reverse proxy in production
+   - Use TLS/HTTPS for network transports
+   - Bind to localhost (127.0.0.1) when possible to limit exposure
+
+2. **Access Control:**
+   - Implement authentication/authorization at the reverse proxy level
+   - Use network-level access controls (firewall rules, security groups)
+   - Monitor and log all access attempts
+
+3. **Repository Security:**
+   - Enable SSH host key verification for production (`LUCIDITY_SSH_VERIFY=true`)
+   - Use HTTPS URLs with credentials for sensitive repositories
+   - Regularly review and clean up cached repositories
+   - Set appropriate cache directory permissions
+
+4. **Configuration:**
+   - Store sensitive configuration in environment variables, not in code
+   - Use restrictive CORS origins in production
+   - Enable audit logging for security-relevant events
 
 **Example usage:**
 ```python

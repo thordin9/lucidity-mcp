@@ -19,6 +19,8 @@ This code review examined the Lucidity MCP project, a Model Context Protocol ser
 #### 1.1 SSH Host Key Verification Disabled
 **Severity:** Critical  
 **Location:** `lucidity/tools/git_utils.py:254`, `lucidity/tools/git_utils.py:310`  
+**Status:** ✅ COMPLETED
+
 **Issue:** SSH host key verification is completely disabled when cloning/updating repositories:
 ```python
 env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
@@ -32,9 +34,18 @@ env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=
 - Warn users prominently about the security implications in documentation
 - Consider maintaining a known_hosts file in the cache directory
 
+**Implementation:**
+- Added `LUCIDITY_SSH_VERIFY` environment variable to enable/disable SSH verification
+- Created centralized configuration system in `lucidity/config.py`
+- Updated `git_command.py` to respect SSH verification setting
+- Added comprehensive security documentation to README with prominent warnings
+- Documented risks and provided production vs development guidance
+
 #### 1.2 Command Injection Risk in Git Operations
 **Severity:** High  
 **Location:** `lucidity/tools/code_analysis.py:66-72`, `lucidity/tools/code_analysis.py:79-96`  
+**Status:** ✅ COMPLETED
+
 **Issue:** User-provided paths and commit ranges are passed directly to subprocess commands:
 ```python
 diff_command = ["git", "diff", commits]
@@ -50,9 +61,19 @@ if path:
 - Validate paths don't contain shell metacharacters or git options (starting with `-`)
 - Add input sanitization before subprocess calls
 
+**Implementation:**
+- Created `lucidity/validation.py` with comprehensive input validation functions
+- Added `is_valid_commit_range()` to validate commit ranges against injection
+- Added `is_valid_path()` to validate file paths
+- Added `sanitize_git_command_args()` to sanitize all git command arguments
+- Updated `code_analysis.py` to validate all inputs before use
+- Added 26 security tests in `tests/test_security.py` covering all validation scenarios
+
 #### 1.3 Directory Traversal Vulnerability
 **Severity:** High  
 **Location:** `lucidity/tools/git_utils.py:89-110`  
+**Status:** ✅ COMPLETED
+
 **Issue:** Branch names extracted from user input aren't validated for directory traversal:
 ```python
 if not branch.startswith("."):
@@ -73,11 +94,20 @@ else:
     return None
 ```
 
+**Implementation:**
+- Added `is_valid_branch_name()` function in `lucidity/validation.py`
+- Validates branch names against safe pattern preventing directory traversal
+- Rejects branch names starting with `.`, `-`, or containing `..`
+- Updated `git_utils.py` to validate all branch names before use
+- Added comprehensive tests for directory traversal prevention
+
 ### Medium Security Issues
 
 #### 1.4 Insecure CORS Configuration
 **Severity:** Medium  
 **Location:** `lucidity/server.py:106`, `lucidity/server.py:222`, `lucidity/server.py:241`  
+**Status:** ✅ COMPLETED
+
 **Issue:** CORS allows all origins:
 ```python
 CORSMiddleware,
@@ -93,6 +123,14 @@ CORSMiddleware,
 - Require explicit origin configuration for production deployments
 - Document the security implications
 
+**Implementation:**
+- Added `LUCIDITY_CORS_ORIGINS` environment variable for configuration
+- Defaults to `*` for development convenience
+- Supports comma-separated list of explicit origins for production
+- Updated `server.py` to use configurable CORS origins from config
+- Added comprehensive security documentation in README explaining risks
+- Provided production vs development configuration examples
+
 ---
 
 ## 2. Error Handling Issues
@@ -102,6 +140,8 @@ CORSMiddleware,
 #### 2.1 Silent Exception Swallowing
 **Severity:** High  
 **Location:** `lucidity/server.py:70-73`  
+**Status:** ✅ COMPLETED
+
 **Issue:** TypeError exceptions are silently ignored:
 ```python
 except TypeError as e:
@@ -122,9 +162,17 @@ except TypeError as e:
         raise
 ```
 
+**Implementation:**
+- Updated `SuppressNoneTypeErrorMiddleware` to include debug logging
+- Defined middleware once at module level to eliminate duplication
+- Added proper documentation to the middleware class
+- Now logs suppressed exceptions for debugging purposes
+
 #### 2.2 Incomplete Error Context in Git Operations
 **Severity:** Medium  
 **Location:** `lucidity/tools/code_analysis.py:105-110`  
+**Status:** ✅ COMPLETED
+
 **Issue:** Exception handling loses context:
 ```python
 except subprocess.CalledProcessError as e:
@@ -142,9 +190,18 @@ except Exception as e:
 - Let callers decide how to handle different failure modes
 - Add more context about the git repository state
 
+**Implementation:**
+- Created custom `GitCommandError` and `GitTimeoutError` exceptions in `git_command.py`
+- Updated `run_git_command()` to raise these custom exceptions with full context
+- Updated error handlers to use custom exceptions throughout
+- Git operations now provide detailed stderr output in exception messages
+- Improved logging with more contextual information
+
 #### 2.3 Missing Timeout Handling
 **Severity:** Medium  
 **Location:** `lucidity/tools/git_utils.py:256-263`, `lucidity/tools/git_utils.py:317-347`  
+**Status:** ✅ COMPLETED
+
 **Issue:** Timeouts are set but TimeoutExpired exceptions return None without cleanup:
 ```python
 except subprocess.TimeoutExpired:
@@ -160,6 +217,15 @@ except subprocess.TimeoutExpired:
     logger.error("Timeout while cloning repository %s", repo_url)
     if os.path.exists(clone_path):
         shutil.rmtree(clone_path)  # Clean up partial clone
+    return None
+```
+
+**Implementation:**
+- Updated `clone_repository()` to clean up partial clones on timeout
+- Added cleanup in all exception handlers (timeout, command error, generic error)
+- Uses `shutil.rmtree()` to remove incomplete repository directories
+- Logs cleanup operations for debugging
+- Updated `update_repository()` to use new error handling approach
     return None
 ```
 
@@ -244,6 +310,8 @@ def run_combined_server(config: dict) -> None:
 #### 4.1 Inefficient File Size Calculation
 **Severity:** Medium  
 **Location:** `lucidity/tools/git_utils.py:495-505`  
+**Status:** ✅ COMPLETED
+
 **Issue:** Walking entire directory tree to calculate size:
 ```python
 for dirpath, dirnames, filenames in os.walk(repo_path):
@@ -264,9 +332,17 @@ result = subprocess.run(
 repo_size = int(result.stdout.split()[0])
 ```
 
+**Implementation:**
+- Updated `cleanup_inactive_repositories()` in `git_utils.py`
+- Now uses `du -sb` command for fast size calculation
+- Falls back to `os.walk()` if `du` command fails
+- Added timeout and error handling for the subprocess call
+
 #### 4.2 Unnecessary Directory Changes
 **Severity:** Low  
 **Location:** `lucidity/tools/code_analysis.py:48-54`, `lucidity/tools/code_analysis.py:135-137`  
+**Status:** ✅ COMPLETED
+
 **Issue:** Multiple functions use `os.chdir()` which is not thread-safe and can cause issues in concurrent scenarios.
 
 **Recommendation:** Use the `cwd` parameter in subprocess calls:
@@ -280,6 +356,13 @@ subprocess.run(
 )
 ```
 
+**Implementation:**
+- Removed all `os.chdir()` calls from `get_git_diff()` and `get_changed_files()`
+- Updated `update_repository()` to use `cwd` parameter instead of `os.chdir()`
+- All `run_git_command()` calls now use the `cwd` parameter
+- Thread-safe execution is now possible
+- Eliminated need for storing and restoring current directory
+
 ---
 
 ## 5. Code Duplication
@@ -289,6 +372,8 @@ subprocess.run(
 #### 5.1 Repeated Git Command Execution Pattern
 **Severity:** Medium  
 **Location:** Throughout `code_analysis.py` and `git_utils.py`  
+**Status:** ✅ COMPLETED
+
 **Issue:** Git subprocess calls are repeated with similar error handling:
 
 **Recommendation:** Create a utility function:
@@ -322,12 +407,29 @@ def run_git_command(
         raise
 ```
 
+**Implementation:**
+- Created `lucidity/git_command.py` with centralized `run_git_command()` utility
+- Handles all git subprocess execution with consistent error handling
+- Includes argument sanitization, timeout handling, and environment setup
+- Respects SSH verification settings from configuration
+- Raises custom `GitCommandError` and `GitTimeoutError` exceptions
+- Updated all git operations in `code_analysis.py` and `git_utils.py` to use this utility
+- Eliminated code duplication throughout the codebase
+
 #### 5.2 Duplicate Middleware Class
 **Severity:** Low  
 **Location:** `lucidity/server.py:62-73`, `lucidity/server.py:176-187`  
+**Status:** ✅ COMPLETED
+
 **Issue:** `SuppressNoneTypeErrorMiddleware` is defined twice identically.
 
 **Recommendation:** Define once at module level and reuse.
+
+**Implementation:**
+- Moved `SuppressNoneTypeErrorMiddleware` to module level in `server.py`
+- Defined once with proper documentation
+- Reused in `run_sse_server()` and `run_combined_server()`
+- Eliminated duplicate class definitions
 
 ---
 
@@ -348,6 +450,8 @@ def run_git_command(
 #### 6.2 Magic Numbers
 **Severity:** Low  
 **Location:** Multiple locations  
+**Status:** ✅ COMPLETED
+
 **Issue:** Hard-coded values without explanation:
 - `lucidity/server.py:284`: `port=6969` (commented as "spicy!" but not configurable constant)
 - `lucidity/tools/code_analysis.py:516`: `if len(modified_code.strip()) < 10:`
@@ -359,6 +463,15 @@ DEFAULT_MCP_PORT = 6969
 MIN_CODE_CHANGE_BYTES = 10
 GIT_CLONE_TIMEOUT_SECONDS = 300
 ```
+
+**Implementation:**
+- Created `lucidity/config.py` with all constants defined
+- `DEFAULT_MCP_PORT = 6969`
+- `MIN_CODE_CHANGE_BYTES = 10`
+- `DEFAULT_CLONE_TIMEOUT_SECONDS = 300`
+- `DEFAULT_FETCH_TIMEOUT_SECONDS = 60`
+- `DEFAULT_CLEANUP_DAYS = 7`
+- All magic numbers replaced with named constants throughout codebase
 
 #### 6.3 Inconsistent Logging Emoji Usage
 **Severity:** Low  
@@ -400,6 +513,8 @@ def test_sse_server_handles_analysis_request():
 #### 7.2 Missing Security Tests
 **Severity:** High  
 **Location:** No security test files  
+**Status:** ✅ COMPLETED
+
 **Issue:** No tests for:
 - Path traversal prevention
 - Command injection prevention
@@ -416,6 +531,17 @@ def test_commit_range_validation_prevents_injection():
     """Test that malicious commit ranges are rejected."""
     assert not is_valid_commit_range("HEAD~1..HEAD; rm -rf /")
 ```
+
+**Implementation:**
+- Created `tests/test_security.py` with comprehensive security tests
+- 26 tests covering all validation scenarios
+- Tests for branch name validation (7 tests)
+- Tests for commit range validation (4 tests)
+- Tests for path validation (5 tests)
+- Tests for git command sanitization (3 tests)
+- Integration tests for security workflows (3 tests)
+- Tests for edge cases (4 tests)
+- All tests passing successfully
 
 #### 7.3 Missing Error Path Tests
 **Severity:** Medium  
@@ -452,6 +578,8 @@ sphinx-apidoc -o docs/api lucidity/
 #### 8.2 Incomplete Security Documentation
 **Severity:** High  
 **Location:** `README.md:200-201`  
+**Status:** ✅ COMPLETED
+
 **Issue:** Security note about SSH host key verification is buried in features section and downplays the risk.
 
 **Recommendation:** Add prominent security section:
@@ -467,6 +595,17 @@ This is a security risk and should only be used in trusted environments.
 **Mitigation:** Use HTTPS URLs with credentials for sensitive repositories
 **Configuration:** Set LUCIDITY_SSH_VERIFY=true to enable verification (requires known_hosts)
 ```
+
+**Implementation:**
+- Added comprehensive "⚠️ Security Considerations" section to README
+- Documented SSH Host Key Verification risks with prominent warnings
+- Documented CORS Configuration security implications
+- Documented Input Validation protections
+- Added "Best Practices" subsection with 4 categories
+- Provided development vs production configuration examples
+- Added "⚙️ Configuration" section documenting all environment variables
+- Created table with all configuration options and their defaults
+- Linked security section from configuration section for visibility
 
 #### 8.3 Missing Troubleshooting Guide
 **Severity:** Low  
@@ -488,6 +627,8 @@ This is a security risk and should only be used in trusted environments.
 #### 9.1 Hard-Coded Default Values
 **Severity:** Medium  
 **Location:** Multiple files  
+**Status:** ✅ COMPLETED
+
 **Issue:** Many defaults are hard-coded rather than configurable:
 - Cache directory: `/tmp/lucidity-mcp-repos`
 - Clone timeout: 300 seconds
@@ -507,6 +648,22 @@ class Config:
     fetch_timeout: int = int(environ.get("LUCIDITY_FETCH_TIMEOUT", "60"))
     cleanup_days: int = int(environ.get("LUCIDITY_CLEANUP_DAYS", "7"))
 ```
+
+**Implementation:**
+- Created `lucidity/config.py` with comprehensive configuration system
+- Implemented `Config` dataclass with all configurable parameters
+- All defaults now loaded from environment variables with fallbacks
+- Supports configuration via:
+  - `LUCIDITY_CACHE_DIR`
+  - `LUCIDITY_CLONE_TIMEOUT`
+  - `LUCIDITY_FETCH_TIMEOUT`
+  - `LUCIDITY_CLEANUP_DAYS`
+  - `LUCIDITY_MCP_PORT`
+  - `LUCIDITY_CORS_ORIGINS`
+  - `LUCIDITY_SSH_VERIFY`
+- Added `get_config()` singleton function for global config access
+- Updated all modules to use centralized configuration
+- Created `tests/test_config.py` with 6 tests (all passing)
 
 #### 9.2 No Rate Limiting
 **Severity:** Medium  
