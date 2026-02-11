@@ -6,6 +6,7 @@ which handles MCP protocol communication using decorators for resources and tool
 
 import argparse
 import asyncio
+import contextlib
 import ipaddress
 from pathlib import Path
 import sys
@@ -208,10 +209,17 @@ def run_combined_server(config: dict[str, Any]) -> None:
                 logger.exception("💥 SSE connection ended with exception: %s", e)
                 handle_taskgroup_exception(e)
 
-    # Create Starlette app with both SSE and Streamable HTTP endpoints
+    # Create a lifespan context manager to run the session manager for streamable HTTP
+    @contextlib.asynccontextmanager
+    async def lifespan(app: Starlette):  # noqa: ARG001
+        """Manage the lifecycle of the session manager for streamable HTTP."""
+        async with mcp._mcp_server.session_manager.run():
+            yield
+
     # Get streamable HTTP app from the underlying MCPServer
     streamable_http = mcp._mcp_server.streamable_http_app()
 
+    # Create Starlette app with both SSE and Streamable HTTP endpoints
     app = Starlette(
         debug=config.get("debug", False),
         middleware=[
@@ -230,6 +238,7 @@ def run_combined_server(config: dict[str, Any]) -> None:
             # Streamable HTTP endpoint
             Mount("/mcp", app=streamable_http),
         ],
+        lifespan=lifespan,
     )
 
     # Create and run Uvicorn server
