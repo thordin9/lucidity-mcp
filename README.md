@@ -46,6 +46,57 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 uv sync
 ```
 
+### Alternative Installation (using pip)
+
+If you prefer to use pip instead of UV:
+
+```bash
+# Clone the repository
+git clone https://github.com/hyperbliss/lucidity-mcp.git
+cd lucidity-mcp
+
+# Set up a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install the package in editable mode
+pip install -e .
+```
+
+### Troubleshooting Installation
+
+If you encounter `ModuleNotFoundError: No module named 'mcp.server.streamable_http'`:
+
+1. **Check your MCP version** - The streamable_http module requires MCP 1.9.0 or higher:
+   ```bash
+   pip show mcp | grep Version
+   ```
+
+2. Ensure you've activated your virtual environment:
+   ```bash
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   ```
+
+3. Update dependencies to get the latest MCP version:
+   ```bash
+   # Using UV (recommended):
+   uv sync
+   
+   # Or using pip:
+   pip install -e . --upgrade
+   ```
+
+4. Verify the installation:
+   ```bash
+   python3 -c "from mcp.server.streamable_http import StreamableHTTPServerTransport; print('✅ MCP installed correctly')"
+   ```
+
+**Note**: If you have an older installation, you may need to remove the lock file and resync:
+```bash
+rm uv.lock
+uv sync
+```
+
 ## 📋 Prerequisites
 
 - Python 3.13 or higher

@@ -6,6 +6,7 @@ which handles MCP protocol communication using decorators for resources and tool
 
 import argparse
 import asyncio
+import contextlib
 import ipaddress
 from pathlib import Path
 import sys
@@ -34,6 +35,20 @@ from .log import (
     setup_global_exception_handler,
     setup_logging,
 )
+
+
+def check_dependencies() -> bool:
+    """Check if required dependencies are available.
+    
+    Returns:
+        True if all dependencies are available, False otherwise
+    """
+    try:
+        # Check for streamable_http module (needed for --transport both and streamable-http)
+        from mcp.server.streamable_http import StreamableHTTPServerTransport  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 # Define middleware to suppress 'NoneType object is not callable' errors during shutdown
@@ -184,76 +199,105 @@ def run_streamable_http_server(config: dict[str, Any]) -> None:
 def run_combined_server(config: dict[str, Any]) -> None:
     """Run the server with both SSE and Streamable HTTP transports.
 
+    This creates a single Starlette app that handles both transports by manually
+    setting up SSE and using StreamableHTTPServerTransport for the /mcp endpoint.
+
     Args:
         config: Server configuration
     """
+    try:
+        from mcp.server.streamable_http import StreamableHTTPServerTransport
+    except ImportError as e:
+        logger.error("❌ Failed to import StreamableHTTPServerTransport")
+        logger.error("   This usually means the MCP package is not installed or is outdated.")
+        logger.error("   The streamable_http module requires MCP version 1.9.0 or higher.")
+        logger.error("   Please ensure you have installed the package with: pip install -e .")
+        logger.error("   Or update your dependencies with: uv sync")
+        logger.error(f"   Error details: {e}")
+        raise ImportError(
+            "The 'mcp' package with streamable_http support is required (version >=1.9.0). "
+            "Install with: pip install 'mcp[cli]>=1.9.0' or pip install -e ."
+        ) from e
+    
     app_config = get_config()
     logger.debug("🔌 Using combined SSE + Streamable HTTP transports for network communication")
 
-    # Get the ASGI apps for both transports from FastMCP
-    try:
-        # Get SSE app from FastMCP
-        sse_app = mcp.sse_app()
-        # Get Streamable HTTP app from FastMCP
-        streamable_app = mcp.streamable_http_app()
-    except AttributeError as e:
-        logger.error("FastMCP version may not support sse_app() or streamable_http_app() methods")
-        logger.error("Falling back to manual SSE setup with streamable HTTP mounted")
-        # Fallback: use manual SSE setup and mount streamable HTTP
-        sse = SseServerTransport("/messages/")
+    # Set up SSE transport manually
+    sse = SseServerTransport("/messages/")
 
-        async def handle_sse(request: Request) -> None:
-            async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
-                try:
-                    await mcp._mcp_server.run(
-                        streams[0],
-                        streams[1],
-                        mcp._mcp_server.create_initialization_options(),
-                    )
-                except asyncio.CancelledError:
-                    logger.debug("🔍 ASGI connection cancelled, shutting down quietly.")
-                except Exception as e:
-                    logger.exception("💥 ASGI connection ended with exception: %s", e)
-                    handle_taskgroup_exception(e)
+    async def handle_sse(request: Request) -> None:
+        """Handle SSE connections at /sse endpoint."""
+        async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+            try:
+                await mcp._mcp_server.run(
+                    streams[0],
+                    streams[1],
+                    mcp._mcp_server.create_initialization_options(),
+                )
+            except asyncio.CancelledError:
+                logger.debug("🔍 SSE connection cancelled, shutting down quietly.")
+            except Exception as e:
+                logger.exception("💥 SSE connection ended with exception: %s", e)
+                handle_taskgroup_exception(e)
 
-        # Create app with both SSE and streamable HTTP endpoints
-        app = Starlette(
-            debug=config.get("debug", False),
-            middleware=[
-                Middleware(SuppressNoneTypeErrorMiddleware),
-                Middleware(
-                    CORSMiddleware,
-                    allow_origins=app_config.cors_origins,
-                    allow_methods=["GET", "POST"],
-                    allow_headers=["*"],
-                ),
-            ],
-            routes=[
-                Route("/sse", endpoint=handle_sse),
-                Mount("/messages/", app=sse.handle_post_message),
-                Mount("/mcp", app=mcp.streamable_http_app()),
-            ],
-        )
-    else:
-        # Create combined Starlette app with both transports mounted
-        app = Starlette(
-            debug=config.get("debug", False),
-            middleware=[
-                Middleware(SuppressNoneTypeErrorMiddleware),
-                Middleware(
-                    CORSMiddleware,
-                    allow_origins=app_config.cors_origins,
-                    allow_methods=["GET", "POST"],
-                    allow_headers=["*"],
-                ),
-            ],
-            routes=[
-                # Mount SSE at /sse (with /messages/ for posting)
-                Mount("/sse", app=sse_app),
-                # Mount Streamable HTTP at /mcp
-                Mount("/mcp", app=streamable_app),
-            ],
-        )
+    # Create a streamable HTTP transport instance for the /mcp endpoint
+    # Note: This transport will be connected once during app lifespan
+    streamable_transport = StreamableHTTPServerTransport(
+        mcp_session_id=None,  # No session ID for stateless operation
+        is_json_response_enabled=False,  # Use SSE streaming (not JSON-only responses)
+    )
+
+    # Create a lifespan context manager to connect the streamable HTTP transport
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: Starlette):
+        """Manage the lifecycle of the streamable HTTP transport."""
+        # Connect the transport and run the MCP server for it
+        async with streamable_transport.connect() as (read_stream, write_stream):
+            # Start the MCP server in a background task
+            async with anyio.create_task_group() as tg:
+                async def run_mcp_server():
+                    try:
+                        await mcp._mcp_server.run(
+                            read_stream,
+                            write_stream,
+                            mcp._mcp_server.create_initialization_options(),
+                        )
+                    except asyncio.CancelledError:
+                        logger.debug("🔍 Streamable HTTP MCP server cancelled.")
+                    except Exception as e:
+                        logger.exception("💥 Streamable HTTP MCP server error: %s", e)
+                
+                tg.start_soon(run_mcp_server)
+                
+                # Keep the transport connected while the app is running
+                yield
+
+    async def handle_streamable_http(scope, receive, send):
+        """Handle Streamable HTTP connections at /mcp endpoint."""
+        # The transport is already connected via lifespan, just handle the request
+        await streamable_transport.handle_request(scope, receive, send)
+
+    # Create Starlette app with both SSE and Streamable HTTP endpoints
+    app = Starlette(
+        debug=config.get("debug", False),
+        middleware=[
+            Middleware(SuppressNoneTypeErrorMiddleware),
+            Middleware(
+                CORSMiddleware,
+                allow_origins=app_config.cors_origins,
+                allow_methods=["GET", "POST", "DELETE"],
+                allow_headers=["*"],
+            ),
+        ],
+        routes=[
+            # SSE endpoints
+            Route("/sse", endpoint=handle_sse),
+            Mount("/messages/", app=sse.handle_post_message),
+            # Streamable HTTP endpoint - use raw ASGI callable
+            Mount("/mcp", app=handle_streamable_http),
+        ],
+        lifespan=lifespan,
+    )
 
     # Create and run Uvicorn server
     uvicorn_config = uvicorn.Config(
@@ -265,6 +309,7 @@ def run_combined_server(config: dict[str, Any]) -> None:
     )
     server = uvicorn.Server(uvicorn_config)
     server.run()
+
 
 
 def parse_args() -> argparse.Namespace:
@@ -435,9 +480,23 @@ def main() -> int:
             logger.info("🚀 Starting SSE server on %s:%s", config["host"], config["port"])
             run_sse_server(config)
         elif args.transport == "streamable-http":
+            # Check dependencies for streamable-http
+            if not check_dependencies():
+                logger.error("❌ Missing required dependencies for streamable-http transport")
+                logger.error("   The streamable_http module requires MCP version 1.9.0 or higher.")
+                logger.error("   Please update dependencies with: uv sync")
+                logger.error("   Or install manually: pip install 'mcp[cli]>=1.9.0'")
+                return 1
             logger.info("🚀 Starting Streamable HTTP server on %s:%s", config["host"], config["port"])
             run_streamable_http_server(config)
         elif args.transport == "both":
+            # Check dependencies for combined transport
+            if not check_dependencies():
+                logger.error("❌ Missing required dependencies for combined transport (both)")
+                logger.error("   The streamable_http module requires MCP version 1.9.0 or higher.")
+                logger.error("   Please update dependencies with: uv sync")
+                logger.error("   Or install manually: pip install 'mcp[cli]>=1.9.0'")
+                return 1
             logger.info("🚀 Starting combined SSE + Streamable HTTP server on %s:%s", config["host"], config["port"])
             logger.info("   SSE endpoint: http://%s:%s/sse", config["host"], config["port"])
             logger.info("   Streamable HTTP endpoint: http://%s:%s/mcp", config["host"], config["port"])

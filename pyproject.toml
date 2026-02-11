@@ -18,8 +18,8 @@ classifiers = [
 dependencies = [
     "dotenv>=0.9.9",
     "httpx>=0.28.1",
-    # Core MCP protocol
-    "mcp[cli]>=1.4.1",
+    # Core MCP protocol - requires 1.9.0+ for streamable_http support
+    "mcp[cli]>=1.9.0",
     # UI and display
     "rich>=13.9.4",
     "sse-starlette>=2.2.1",
