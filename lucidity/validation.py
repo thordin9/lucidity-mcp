@@ -12,8 +12,8 @@ from typing import Any
 
 
 # Regex patterns for validation
-SAFE_BRANCH_PATTERN = re.compile(r"^[a-zA-Z0-9/_-]+$")
-COMMIT_RANGE_PATTERN = re.compile(r"^[a-zA-Z0-9~^.]+\.\.[a-zA-Z0-9~^.]+$")
+SAFE_BRANCH_PATTERN = re.compile(r"^[a-zA-Z0-9/_.-]+$")
+COMMIT_RANGE_PATTERN = re.compile(r"^[a-zA-Z0-9~^./_-]+\.\.[a-zA-Z0-9~^./_-]+$")
 COMMIT_SHA_PATTERN = re.compile(r"^[a-fA-F0-9]{7,40}$")
 
 
