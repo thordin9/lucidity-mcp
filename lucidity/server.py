@@ -25,6 +25,7 @@ import uvicorn
 
 # Import resources and tools modules to register decorators
 from . import prompts, tools  # noqa: F401
+from .config import get_config
 from .context import mcp
 from .log import (
     handle_taskgroup_exception,
@@ -33,6 +34,35 @@ from .log import (
     setup_global_exception_handler,
     setup_logging,
 )
+
+
+# Define middleware to suppress 'NoneType object is not callable' errors during shutdown
+class SuppressNoneTypeErrorMiddleware:
+    """Middleware to suppress expected shutdown TypeErrors."""
+
+    def __init__(self, app: Any) -> None:
+        """Initialize the middleware.
+
+        Args:
+            app: The ASGI application to wrap
+        """
+        self.app = app
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        """Handle ASGI requests with TypeError suppression.
+
+        Args:
+            scope: ASGI scope dictionary
+            receive: ASGI receive callable
+            send: ASGI send callable
+        """
+        try:
+            await self.app(scope, receive, send)
+        except TypeError as e:
+            if "NoneType" in str(e) and "not callable" in str(e):
+                logger.debug("Suppressing expected shutdown TypeError: %s", e)
+            else:
+                raise
 
 
 def load_environment() -> None:
@@ -57,20 +87,7 @@ def run_sse_server(config: dict[str, Any]) -> None:
     Args:
         config: Server configuration
     """
-
-    # Define middleware to suppress 'NoneType object is not callable' errors during shutdown
-    class SuppressNoneTypeErrorMiddleware:
-        def __init__(self, app: Any) -> None:
-            self.app = app
-
-        async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-            try:
-                await self.app(scope, receive, send)
-            except TypeError as e:
-                if "NoneType" in str(e) and "not callable" in str(e):
-                    pass
-                else:
-                    raise
+    app_config = get_config()
 
     # Set up SSE transport
     sse = SseServerTransport("/messages/")
@@ -103,7 +120,7 @@ def run_sse_server(config: dict[str, Any]) -> None:
             Middleware(SuppressNoneTypeErrorMiddleware),
             Middleware(
                 CORSMiddleware,
-                allow_origins=["*"],
+                allow_origins=app_config.cors_origins,
                 allow_methods=["GET", "POST"],
                 allow_headers=["*"],
             ),
@@ -170,21 +187,8 @@ def run_combined_server(config: dict[str, Any]) -> None:
     Args:
         config: Server configuration
     """
+    app_config = get_config()
     logger.debug("🔌 Using combined SSE + Streamable HTTP transports for network communication")
-
-    # Define middleware to suppress 'NoneType object is not callable' errors during shutdown
-    class SuppressNoneTypeErrorMiddleware:
-        def __init__(self, app: Any) -> None:
-            self.app = app
-
-        async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-            try:
-                await self.app(scope, receive, send)
-            except TypeError as e:
-                if "NoneType" in str(e) and "not callable" in str(e):
-                    pass
-                else:
-                    raise
 
     # Get the ASGI apps for both transports from FastMCP
     try:
@@ -219,7 +223,7 @@ def run_combined_server(config: dict[str, Any]) -> None:
                 Middleware(SuppressNoneTypeErrorMiddleware),
                 Middleware(
                     CORSMiddleware,
-                    allow_origins=["*"],
+                    allow_origins=app_config.cors_origins,
                     allow_methods=["GET", "POST"],
                     allow_headers=["*"],
                 ),
@@ -238,7 +242,7 @@ def run_combined_server(config: dict[str, Any]) -> None:
                 Middleware(SuppressNoneTypeErrorMiddleware),
                 Middleware(
                     CORSMiddleware,
-                    allow_origins=["*"],
+                    allow_origins=app_config.cors_origins,
                     allow_methods=["GET", "POST"],
                     allow_headers=["*"],
                 ),
@@ -281,7 +285,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--port",
-        default=6969,  # spicy!
+        default=None,  # Will use config value if not specified
         type=int,
         help="Port to listen on for network connections",
     )
@@ -406,11 +410,14 @@ def main() -> int:
         if console_enabled or args.log_file:
             logger.info("✨ Lucidity MCP Server - AI powered code review tool")
 
+        # Get configuration
+        app_config = get_config()
+
         # Prepare server configuration
         config = {
             "transport": args.transport.upper(),
             "host": args.host,
-            "port": args.port,
+            "port": args.port if args.port is not None else app_config.mcp_port,
             "debug": args.debug,
             "log_level": log_level,
         }

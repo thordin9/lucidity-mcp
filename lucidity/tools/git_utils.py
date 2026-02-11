@@ -16,7 +16,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ..config import get_config
+from ..git_command import GitCommandError, GitTimeoutError, run_git_command
 from ..log import logger
+from ..validation import is_valid_branch_name
 
 
 def get_cache_directory() -> str:
@@ -28,10 +31,8 @@ def get_cache_directory() -> str:
     Returns:
         Path to the cache directory
     """
-    cache_dir = os.environ.get("LUCIDITY_CACHE_DIR")
-    if cache_dir:
-        return cache_dir
-    return os.path.join(tempfile.gettempdir(), "lucidity-mcp-repos")
+    config = get_config()
+    return config.cache_dir
 
 
 def is_git_repository(path: str) -> bool:
@@ -86,17 +87,18 @@ def extract_repo_info_from_path(workspace_root: str) -> dict[str, Any] | None:
             # Extract branch and clean up the URL
             branch = workspace_root[second_at + 1:]
             workspace_root = workspace_root[:second_at]
-            # Validate branch (no dots at start for security)
-            if not branch.startswith("."):
+            # Validate branch name for security
+            if is_valid_branch_name(branch):
                 logger.debug("Detected branch specification: %s", branch)
             else:
+                logger.error("Invalid branch name format: %s", branch)
                 # Invalid branch format, restore
                 workspace_root = workspace_root + "@" + branch
                 branch = None
     elif "@" in workspace_root and not workspace_root.startswith(("http://", "https://")):
         # Split on the last @ for other formats
         parts = workspace_root.rsplit("@", 1)
-        if len(parts) == 2 and not parts[1].startswith("."):
+        if len(parts) == 2 and is_valid_branch_name(parts[1]):
             workspace_root = parts[0]
             branch = parts[1]
             logger.debug("Detected branch specification: %s", branch)
@@ -104,7 +106,7 @@ def extract_repo_info_from_path(workspace_root: str) -> dict[str, Any] | None:
         # For HTTPS URLs, check for @branch at the end
         if "@" in workspace_root:
             parts = workspace_root.rsplit("@", 1)
-            if len(parts) == 2 and not parts[1].startswith("."):
+            if len(parts) == 2 and is_valid_branch_name(parts[1]):
                 workspace_root = parts[0]
                 branch = parts[1]
                 logger.debug("Detected branch specification: %s", branch)
@@ -223,7 +225,13 @@ def clone_repository(repo_url: str, repo_name: str, branch: str | None = None) -
     Returns:
         Path to the cloned repository, or None if cloning failed
     """
+    # Validate branch name if provided
+    if branch and not is_valid_branch_name(branch):
+        logger.error("Invalid branch name: %s", branch)
+        return None
+
     clone_path = get_clone_directory(repo_name)
+    config = get_config()
 
     logger.info("Attempting to clone repository %s to %s", repo_url, clone_path)
     if branch:
@@ -239,27 +247,17 @@ def clone_repository(repo_url: str, repo_name: str, branch: str | None = None) -
             # If update fails, remove and re-clone
             shutil.rmtree(clone_path)
 
-        # Clone the repository
-        clone_cmd = ["git", "clone", repo_url, clone_path]
+        # Build clone command
+        clone_args = ["clone", repo_url, clone_path]
         if branch:
             # Clone specific branch for efficiency
-            clone_cmd.extend(["--branch", branch])
+            clone_args.extend(["--branch", branch])
 
-        # Set up environment to disable SSH host key verification
-        # This prevents "Host key verification failed" errors when cloning via SSH
-        # Note: This reduces security by disabling protection against MITM attacks,
-        # but is necessary for automated workflows and development environments.
-        # Users requiring strict security should use HTTPS with credentials instead.
-        env = os.environ.copy()
-        env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-
-        result = subprocess.run(
-            clone_cmd,
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=300,  # 5 minute timeout for cloning
-            env=env,
+        # Use run_git_command which handles SSH verification based on config
+        result = run_git_command(
+            clone_args,
+            cwd=os.path.dirname(clone_path) or ".",
+            timeout=config.clone_timeout,
         )
         logger.debug("Clone output: %s", result.stdout)
         logger.info("Successfully cloned repository to %s", clone_path)
@@ -269,14 +267,26 @@ def clone_repository(repo_url: str, repo_name: str, branch: str | None = None) -
         
         return clone_path
 
-    except subprocess.TimeoutExpired:
+    except GitTimeoutError:
         logger.error("Timeout while cloning repository %s", repo_url)
+        # Clean up partial clone
+        if os.path.exists(clone_path):
+            logger.debug("Cleaning up partial clone at %s", clone_path)
+            shutil.rmtree(clone_path)
         return None
-    except subprocess.CalledProcessError as e:
-        logger.error("Error cloning repository %s: %s (stderr: %s)", repo_url, e, e.stderr)
+    except GitCommandError as e:
+        logger.error("Error cloning repository %s: %s", repo_url, e.stderr)
+        # Clean up failed clone
+        if os.path.exists(clone_path):
+            logger.debug("Cleaning up failed clone at %s", clone_path)
+            shutil.rmtree(clone_path)
         return None
     except Exception as e:
         logger.error("Unexpected error cloning repository %s: %s", repo_url, e)
+        # Clean up on any error
+        if os.path.exists(clone_path):
+            logger.debug("Cleaning up failed clone at %s", clone_path)
+            shutil.rmtree(clone_path)
         return None
 
 
@@ -290,78 +300,55 @@ def update_repository(repo_path: str, branch: str | None = None) -> bool:
     Returns:
         True if update was successful, False otherwise
     """
+    # Validate branch name if provided
+    if branch and not is_valid_branch_name(branch):
+        logger.error("Invalid branch name: %s", branch)
+        return False
+
     if not is_git_repository(repo_path):
         logger.error("Path %s is not a git repository", repo_path)
         return False
 
+    config = get_config()
     logger.info("Updating repository at %s", repo_path)
     if branch:
         logger.info("Will checkout branch: %s", branch)
 
     try:
-        # Store current directory
-        current_dir = os.getcwd()
+        # Fetch latest changes using cwd parameter instead of os.chdir
+        run_git_command(
+            ["fetch", "--all"],
+            cwd=repo_path,
+            timeout=config.fetch_timeout,
+        )
+        logger.debug("Successfully fetched latest changes")
 
-        # Set up environment to disable SSH host key verification
-        # This prevents "Host key verification failed" errors when fetching via SSH
-        # Note: This reduces security by disabling protection against MITM attacks,
-        # but is necessary for automated workflows and development environments.
-        env = os.environ.copy()
-        env["GIT_SSH_COMMAND"] = "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-
-        try:
-            # Change to repository directory
-            os.chdir(repo_path)
-
-            # Fetch latest changes
-            result = subprocess.run(
-                ["git", "fetch", "--all"],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=60,  # 1 minute timeout for fetching
-                env=env,
+        # Checkout the specified branch if provided
+        if branch:
+            run_git_command(
+                ["checkout", branch],
+                cwd=repo_path,
+                timeout=30,
             )
-            logger.debug("Fetch output: %s", result.stdout)
+            logger.debug("Checked out branch: %s", branch)
 
-            # Checkout the specified branch if provided
-            if branch:
-                result = subprocess.run(
-                    ["git", "checkout", branch],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    timeout=30,
-                )
-                logger.debug("Checkout output: %s", result.stdout)
+        # Pull changes for the current branch
+        run_git_command(
+            ["pull"],
+            cwd=repo_path,
+            timeout=config.fetch_timeout,
+        )
+        logger.debug("Successfully pulled changes")
 
-            # Pull changes for the current branch
-            result = subprocess.run(
-                ["git", "pull"],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=60,
-                env=env,
-            )
-            logger.debug("Pull output: %s", result.stdout)
+        logger.info("Successfully updated repository at %s", repo_path)
+        
+        # Track repository access time
+        touch_repository_access(repo_path)
+        
+        return True
 
-            logger.info("Successfully updated repository at %s", repo_path)
-            
-            # Track repository access time
-            touch_repository_access(repo_path)
-            
-            return True
-
-        finally:
-            # Restore original directory
-            os.chdir(current_dir)
-
-    except subprocess.TimeoutExpired:
-        logger.error("Timeout while updating repository at %s", repo_path)
-        return False
-    except subprocess.CalledProcessError as e:
-        logger.error("Error updating repository at %s: %s (stderr: %s)", repo_path, e, e.stderr)
+    except (GitTimeoutError, GitCommandError) as e:
+        logger.error("Error updating repository at %s: %s", repo_path, e)
         return False
     except Exception as e:
         logger.error("Unexpected error updating repository at %s: %s", repo_path, e)
@@ -492,17 +479,28 @@ def cleanup_inactive_repositories(days: int = 7, dry_run: bool = False) -> dict[
             
             # Check if repository is inactive
             if last_access < cutoff_time:
-                # Calculate size before deletion
+                # Calculate size before deletion using du command for better performance
                 repo_size = 0
                 try:
-                    for dirpath, dirnames, filenames in os.walk(repo_path):
-                        for filename in filenames:
-                            filepath = os.path.join(dirpath, filename)
-                            try:
-                                repo_size += os.path.getsize(filepath)
-                            except OSError:
-                                pass  # Skip files we can't access
-                except OSError as e:
+                    result = subprocess.run(
+                        ["du", "-sb", repo_path],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                        check=False,
+                    )
+                    if result.returncode == 0:
+                        repo_size = int(result.stdout.split()[0])
+                    else:
+                        # Fallback to os.walk if du fails
+                        for dirpath, dirnames, filenames in os.walk(repo_path):
+                            for filename in filenames:
+                                filepath = os.path.join(dirpath, filename)
+                                try:
+                                    repo_size += os.path.getsize(filepath)
+                                except OSError:
+                                    pass  # Skip files we can't access
+                except (subprocess.TimeoutExpired, ValueError, OSError) as e:
                     logger.warning("Error calculating size for %s: %s", repo_path, e)
                 
                 days_inactive = (current_time - last_access) / (24 * 60 * 60)
