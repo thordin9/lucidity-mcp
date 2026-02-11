@@ -6,6 +6,7 @@ which handles MCP protocol communication using decorators for resources and tool
 
 import argparse
 import asyncio
+import contextlib
 import ipaddress
 from pathlib import Path
 import sys
@@ -247,7 +248,7 @@ def run_combined_server(config: dict[str, Any]) -> None:
     )
 
     # Create a lifespan context manager to connect the streamable HTTP transport
-    @anyio.lowlevel.async_context_manager
+    @contextlib.asynccontextmanager
     async def lifespan(_app: Starlette):
         """Manage the lifecycle of the streamable HTTP transport."""
         # Connect the transport and run the MCP server for it
