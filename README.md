@@ -67,29 +67,35 @@ pip install -e .
 
 If you encounter `ModuleNotFoundError: No module named 'mcp.server.streamable_http'`:
 
-1. Ensure you've activated your virtual environment:
+1. **Check your MCP version** - The streamable_http module requires MCP 1.9.0 or higher:
+   ```bash
+   pip show mcp | grep Version
+   ```
+
+2. Ensure you've activated your virtual environment:
    ```bash
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    ```
 
-2. Verify MCP is installed:
+3. Update dependencies to get the latest MCP version:
    ```bash
-   pip show mcp
-   ```
-
-3. If not installed or outdated, reinstall dependencies:
-   ```bash
-   # Using UV:
+   # Using UV (recommended):
    uv sync
    
    # Or using pip:
-   pip install -e .
+   pip install -e . --upgrade
    ```
 
 4. Verify the installation:
    ```bash
    python3 -c "from mcp.server.streamable_http import StreamableHTTPServerTransport; print('✅ MCP installed correctly')"
    ```
+
+**Note**: If you have an older installation, you may need to remove the lock file and resync:
+```bash
+rm uv.lock
+uv sync
+```
 
 ## 📋 Prerequisites
 

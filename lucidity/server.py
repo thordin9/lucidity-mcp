@@ -209,11 +209,13 @@ def run_combined_server(config: dict[str, Any]) -> None:
     except ImportError as e:
         logger.error("❌ Failed to import StreamableHTTPServerTransport")
         logger.error("   This usually means the MCP package is not installed or is outdated.")
+        logger.error("   The streamable_http module requires MCP version 1.9.0 or higher.")
         logger.error("   Please ensure you have installed the package with: pip install -e .")
+        logger.error("   Or update your dependencies with: uv sync")
         logger.error(f"   Error details: {e}")
         raise ImportError(
-            "The 'mcp' package with streamable_http support is required. "
-            "Install with: pip install 'mcp[cli]>=1.4.1' or pip install -e ."
+            "The 'mcp' package with streamable_http support is required (version >=1.9.0). "
+            "Install with: pip install 'mcp[cli]>=1.9.0' or pip install -e ."
         ) from e
     
     app_config = get_config()
@@ -480,7 +482,9 @@ def main() -> int:
             # Check dependencies for streamable-http
             if not check_dependencies():
                 logger.error("❌ Missing required dependencies for streamable-http transport")
-                logger.error("   Please install dependencies with: pip install -e . or uv sync")
+                logger.error("   The streamable_http module requires MCP version 1.9.0 or higher.")
+                logger.error("   Please update dependencies with: uv sync")
+                logger.error("   Or install manually: pip install 'mcp[cli]>=1.9.0'")
                 return 1
             logger.info("🚀 Starting Streamable HTTP server on %s:%s", config["host"], config["port"])
             run_streamable_http_server(config)
@@ -488,7 +492,9 @@ def main() -> int:
             # Check dependencies for combined transport
             if not check_dependencies():
                 logger.error("❌ Missing required dependencies for combined transport (both)")
-                logger.error("   Please install dependencies with: pip install -e . or uv sync")
+                logger.error("   The streamable_http module requires MCP version 1.9.0 or higher.")
+                logger.error("   Please update dependencies with: uv sync")
+                logger.error("   Or install manually: pip install 'mcp[cli]>=1.9.0'")
                 return 1
             logger.info("🚀 Starting combined SSE + Streamable HTTP server on %s:%s", config["host"], config["port"])
             logger.info("   SSE endpoint: http://%s:%s/sse", config["host"], config["port"])
