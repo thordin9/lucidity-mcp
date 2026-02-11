@@ -190,7 +190,17 @@ def run_combined_server(config: dict[str, Any]) -> None:
     Args:
         config: Server configuration
     """
-    from mcp.server.streamable_http import StreamableHTTPServerTransport
+    try:
+        from mcp.server.streamable_http import StreamableHTTPServerTransport
+    except ImportError as e:
+        logger.error("❌ Failed to import StreamableHTTPServerTransport")
+        logger.error("   This usually means the MCP package is not installed or is outdated.")
+        logger.error("   Please ensure you have installed the package with: pip install -e .")
+        logger.error(f"   Error details: {e}")
+        raise ImportError(
+            "The 'mcp' package with streamable_http support is required. "
+            "Install with: pip install 'mcp[cli]>=1.4.1' or pip install -e ."
+        ) from e
     
     app_config = get_config()
     logger.debug("🔌 Using combined SSE + Streamable HTTP transports for network communication")
