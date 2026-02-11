@@ -36,6 +36,20 @@ from .log import (
 )
 
 
+def check_dependencies() -> bool:
+    """Check if required dependencies are available.
+    
+    Returns:
+        True if all dependencies are available, False otherwise
+    """
+    try:
+        # Check for streamable_http module (needed for --transport both and streamable-http)
+        from mcp.server.streamable_http import StreamableHTTPServerTransport  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 # Define middleware to suppress 'NoneType object is not callable' errors during shutdown
 class SuppressNoneTypeErrorMiddleware:
     """Middleware to suppress expected shutdown TypeErrors."""
@@ -463,9 +477,19 @@ def main() -> int:
             logger.info("🚀 Starting SSE server on %s:%s", config["host"], config["port"])
             run_sse_server(config)
         elif args.transport == "streamable-http":
+            # Check dependencies for streamable-http
+            if not check_dependencies():
+                logger.error("❌ Missing required dependencies for streamable-http transport")
+                logger.error("   Please install dependencies with: pip install -e . or uv sync")
+                return 1
             logger.info("🚀 Starting Streamable HTTP server on %s:%s", config["host"], config["port"])
             run_streamable_http_server(config)
         elif args.transport == "both":
+            # Check dependencies for combined transport
+            if not check_dependencies():
+                logger.error("❌ Missing required dependencies for combined transport (both)")
+                logger.error("   Please install dependencies with: pip install -e . or uv sync")
+                return 1
             logger.info("🚀 Starting combined SSE + Streamable HTTP server on %s:%s", config["host"], config["port"])
             logger.info("   SSE endpoint: http://%s:%s/sse", config["host"], config["port"])
             logger.info("   Streamable HTTP endpoint: http://%s:%s/mcp", config["host"], config["port"])
