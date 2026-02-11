@@ -185,9 +185,14 @@ def run_streamable_http_server(config: dict[str, Any]) -> None:
 def run_combined_server(config: dict[str, Any]) -> None:
     """Run the server with both SSE and Streamable HTTP transports.
 
+    This creates a single Starlette app that handles both transports by manually
+    setting up SSE and using StreamableHTTPServerTransport for the /mcp endpoint.
+
     Args:
         config: Server configuration
     """
+    from mcp.server.streamable_http import StreamableHTTPServerTransport
+    
     app_config = get_config()
     logger.debug("🔌 Using combined SSE + Streamable HTTP transports for network communication")
 
@@ -209,19 +214,35 @@ def run_combined_server(config: dict[str, Any]) -> None:
                 logger.exception("💥 SSE connection ended with exception: %s", e)
                 handle_taskgroup_exception(e)
 
-    # Create a lifespan context manager to run the session manager for streamable HTTP
-    @contextlib.asynccontextmanager
-    async def lifespan(_app: Starlette):
-        """Manage the lifecycle of the session manager for streamable HTTP.
+    # Create a streamable HTTP transport instance for the /mcp endpoint
+    streamable_transport = StreamableHTTPServerTransport(
+        mcp_session_id=None,  # No session ID for stateless operation
+        is_json_response_enabled=False,  # Enable SSE streaming
+    )
 
-        Args:
-            _app: Starlette app instance (required by interface, not used)
-        """
-        async with mcp._mcp_server.session_manager.run():
-            yield
-
-    # Get streamable HTTP app from the underlying MCPServer
-    streamable_http = mcp._mcp_server.streamable_http_app()
+    async def handle_streamable_http(scope, receive, send):
+        """Handle Streamable HTTP connections at /mcp endpoint."""
+        # Connect the transport to get read/write streams
+        async with streamable_transport.connect() as (read_stream, write_stream):
+            # Create a task group to run both the MCP server and the transport handler
+            async with anyio.create_task_group() as tg:
+                # Start the MCP server handler
+                async def run_mcp_server():
+                    try:
+                        await mcp._mcp_server.run(
+                            read_stream,
+                            write_stream,
+                            mcp._mcp_server.create_initialization_options(),
+                        )
+                    except asyncio.CancelledError:
+                        logger.debug("🔍 Streamable HTTP MCP handler cancelled.")
+                    except Exception as e:
+                        logger.exception("💥 Streamable HTTP MCP handler error: %s", e)
+                
+                tg.start_soon(run_mcp_server)
+                
+                # Let the transport handle the HTTP request/response
+                await streamable_transport.handle_request(scope, receive, send)
 
     # Create Starlette app with both SSE and Streamable HTTP endpoints
     app = Starlette(
@@ -239,10 +260,9 @@ def run_combined_server(config: dict[str, Any]) -> None:
             # SSE endpoints
             Route("/sse", endpoint=handle_sse),
             Mount("/messages/", app=sse.handle_post_message),
-            # Streamable HTTP endpoint
-            Mount("/mcp", app=streamable_http),
+            # Streamable HTTP endpoint - use raw ASGI callable
+            Mount("/mcp", app=handle_streamable_http),
         ],
-        lifespan=lifespan,
     )
 
     # Create and run Uvicorn server
@@ -255,6 +275,7 @@ def run_combined_server(config: dict[str, Any]) -> None:
     )
     server = uvicorn.Server(uvicorn_config)
     server.run()
+
 
 
 def parse_args() -> argparse.Namespace:
