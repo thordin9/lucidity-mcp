@@ -15,6 +15,7 @@ import anyio
 from dotenv import load_dotenv
 from mcp.server.sse import SseServerTransport
 from mcp.server.stdio import stdio_server
+from mcp.server.streamable_http import StreamableHTTPServerTransport
 from rich.logging import RichHandler
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -190,70 +191,63 @@ def run_combined_server(config: dict[str, Any]) -> None:
     app_config = get_config()
     logger.debug("🔌 Using combined SSE + Streamable HTTP transports for network communication")
 
-    # Get the ASGI apps for both transports from FastMCP
-    try:
-        # Get SSE app from FastMCP
-        sse_app = mcp.sse_app()
-        # Get Streamable HTTP app from FastMCP
-        streamable_app = mcp.streamable_http_app()
-    except AttributeError as e:
-        logger.error("FastMCP version may not support sse_app() or streamable_http_app() methods")
-        logger.error("Falling back to manual SSE setup with streamable HTTP mounted")
-        # Fallback: use manual SSE setup and mount streamable HTTP
-        sse = SseServerTransport("/messages/")
+    # Set up both transports manually
+    # SSE transport for legacy clients
+    sse = SseServerTransport("/messages/")
+    
+    # Streamable HTTP transport for modern clients
+    streamable_http = StreamableHTTPServerTransport("/mcp")
 
-        async def handle_sse(request: Request) -> None:
-            async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
-                try:
-                    await mcp._mcp_server.run(
-                        streams[0],
-                        streams[1],
-                        mcp._mcp_server.create_initialization_options(),
-                    )
-                except asyncio.CancelledError:
-                    logger.debug("🔍 ASGI connection cancelled, shutting down quietly.")
-                except Exception as e:
-                    logger.exception("💥 ASGI connection ended with exception: %s", e)
-                    handle_taskgroup_exception(e)
+    async def handle_sse(request: Request) -> None:
+        """Handle SSE connections at /sse endpoint."""
+        async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+            try:
+                await mcp._mcp_server.run(
+                    streams[0],
+                    streams[1],
+                    mcp._mcp_server.create_initialization_options(),
+                )
+            except asyncio.CancelledError:
+                logger.debug("🔍 SSE connection cancelled, shutting down quietly.")
+            except Exception as e:
+                logger.exception("💥 SSE connection ended with exception: %s", e)
+                handle_taskgroup_exception(e)
 
-        # Create app with both SSE and streamable HTTP endpoints
-        app = Starlette(
-            debug=config.get("debug", False),
-            middleware=[
-                Middleware(SuppressNoneTypeErrorMiddleware),
-                Middleware(
-                    CORSMiddleware,
-                    allow_origins=app_config.cors_origins,
-                    allow_methods=["GET", "POST"],
-                    allow_headers=["*"],
-                ),
-            ],
-            routes=[
-                Route("/sse", endpoint=handle_sse),
-                Mount("/messages/", app=sse.handle_post_message),
-                Mount("/mcp", app=mcp.streamable_http_app()),
-            ],
-        )
-    else:
-        # Create combined Starlette app with both transports mounted
-        app = Starlette(
-            debug=config.get("debug", False),
-            middleware=[
-                Middleware(SuppressNoneTypeErrorMiddleware),
-                Middleware(
-                    CORSMiddleware,
-                    allow_origins=app_config.cors_origins,
-                    allow_methods=["GET", "POST"],
-                    allow_headers=["*"],
-                ),
-            ],
-            routes=[
-                # Mount SSE at /sse (with /messages/ for posting)
-                Mount("/sse", app=sse_app),
-                # Mount Streamable HTTP at /mcp
-                Mount("/mcp", app=streamable_app),
-            ],
-        )
+    async def handle_streamable_http(request: Request) -> None:
+        """Handle Streamable HTTP connections at /mcp endpoint."""
+        async with streamable_http.connect_http(request.scope, request.receive, request._send) as streams:
+            try:
+                await mcp._mcp_server.run(
+                    streams[0],
+                    streams[1],
+                    mcp._mcp_server.create_initialization_options(),
+                )
+            except asyncio.CancelledError:
+                logger.debug("🔍 Streamable HTTP connection cancelled, shutting down quietly.")
+            except Exception as e:
+                logger.exception("💥 Streamable HTTP connection ended with exception: %s", e)
+                handle_taskgroup_exception(e)
+
+    # Create Starlette app with both SSE and Streamable HTTP endpoints
+    app = Starlette(
+        debug=config.get("debug", False),
+        middleware=[
+            Middleware(SuppressNoneTypeErrorMiddleware),
+            Middleware(
+                CORSMiddleware,
+                allow_origins=app_config.cors_origins,
+                allow_methods=["GET", "POST", "DELETE"],
+                allow_headers=["*"],
+            ),
+        ],
+        routes=[
+            # SSE endpoints
+            Route("/sse", endpoint=handle_sse),
+            Mount("/messages/", app=sse.handle_post_message),
+            # Streamable HTTP endpoint
+            Route("/mcp", endpoint=handle_streamable_http, methods=["GET", "POST", "DELETE"]),
+        ],
+    )
 
     # Create and run Uvicorn server
     uvicorn_config = uvicorn.Config(
